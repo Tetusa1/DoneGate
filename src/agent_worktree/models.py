@@ -108,6 +108,25 @@ class RequiredCheck:
 
 
 @dataclass(frozen=True)
+class WorktreeInfo:
+    path: Path
+    head: str | None
+    branch: str | None
+    bare: bool = False
+    detached: bool = False
+
+
+@dataclass(frozen=True)
+class CreatedWorktree:
+    task_id: str
+    branch: str
+    worktree_path: Path
+    base_ref: str
+    base_commit: str
+    head_commit: str
+
+
+@dataclass(frozen=True)
 class TaskDefinition:
     schema_version: str
     task_id: str
