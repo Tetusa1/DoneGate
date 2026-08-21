@@ -4,7 +4,7 @@
 
 ## Status
 
-`agent-worktree` is in v0.1 development. This slice validates task files and persists a restart-safe SQLite task state machine. The Git worktree runtime, leases, worker execution, evidence collection, completion validation, and recovery engine are planned but intentionally not implemented yet.
+`agent-worktree` is in v0.1 development. This slice validates task files, persists a restart-safe SQLite task state machine, and provides a transactional path-lease core. The Git worktree runtime, worker execution, evidence collection, completion validation, and recovery engine are planned but intentionally not implemented yet.
 
 ## What
 
@@ -19,7 +19,7 @@ Coding agents need explicit boundaries because they can:
 - write outside their assigned scope;
 - claim completion without trustworthy Git or test evidence.
 
-The planned project addresses those risks with isolated worktrees, path ownership, leases, generic worker commands, evidence collection, fail-closed validation, and cleanup/recovery.
+The planned project addresses those risks with isolated worktrees, path ownership, leases, generic worker commands, evidence collection, fail-closed validation, and cleanup/recovery. The lease manager currently provides the reusable path-ownership primitive; it is not wired into worker runtime commands yet.
 
 ## Quick start
 
@@ -50,7 +50,7 @@ Only `task create` and `task status` are implemented in this development task. T
 
 ## Task paths
 
-Task paths are repository-relative patterns. Absolute paths, empty paths, and `..` traversal are rejected at schema-validation time. Complex glob overlap and runtime ownership belong to the later lease manager.
+Task paths are repository-relative patterns. Absolute paths, empty paths, and `..` traversal are rejected at schema-validation time. The lease core accepts exact paths and `directory/**` patterns, detects segment-aware overlap, and persists active, released, and stale lease history in the same SQLite state database.
 
 ## Non-goals
 

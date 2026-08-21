@@ -59,26 +59,45 @@ def _require_argv(value: Any, field: str) -> tuple[str, ...]:
     return tuple(command)
 
 
-def _validate_relative_path(value: Any, field: str, index: int) -> str:
+def canonicalize_path_pattern(value: Any, field: str = "path") -> str:
     if not isinstance(value, str) or not value.strip():
-        raise TaskValidationError(f"{field}[{index}] must be a non-empty repository-relative path")
+        raise TaskValidationError(f"{field} must be a non-empty repository-relative path")
 
     raw = value.strip()
     if "\x00" in raw:
-        raise TaskValidationError(f"{field}[{index}] contains a NUL byte")
+        raise TaskValidationError(f"{field} contains a NUL byte")
 
     windows_path = PureWindowsPath(raw)
     posix_path = PurePosixPath(raw.replace("\\", "/"))
     if windows_path.is_absolute() or windows_path.drive or posix_path.is_absolute():
-        raise TaskValidationError(f"{field}[{index}] must be repository-relative")
+        raise TaskValidationError(f"{field} must be repository-relative")
     if raw.startswith(("/", "\\")):
-        raise TaskValidationError(f"{field}[{index}] must be repository-relative")
+        raise TaskValidationError(f"{field} must be repository-relative")
 
-    parts = [part for part in re.split(r"[\\/]+", raw) if part]
-    if not parts or any(part in {"..", "."} for part in parts):
-        raise TaskValidationError(f"{field}[{index}] cannot contain traversal segments")
+    parts = [part for part in re.split(r"[\\/]+", raw) if part and part != "."]
+    if not parts or any(part == ".." for part in parts):
+        raise TaskValidationError(f"{field} cannot contain traversal segments")
 
-    return "/".join(parts)
+    normalized = "/".join(parts)
+    wildcard_chars = set("*?[]")
+    if any(char in wildcard_chars for char in normalized):
+        if (
+            not normalized.endswith("/**")
+            or normalized == "**"
+            or normalized.count("*") != 2
+            or any(char in normalized[:-3] for char in wildcard_chars)
+        ):
+            raise TaskValidationError(
+                f"{field} supports only exact paths and directory/** patterns"
+            )
+    return normalized
+
+
+def _validate_relative_path(value: Any, field: str, index: int) -> str:
+    try:
+        return canonicalize_path_pattern(value, f"{field}[{index}]")
+    except TaskValidationError:
+        raise
 
 
 def _path_list(value: Any, field: str) -> tuple[str, ...]:
@@ -126,6 +145,12 @@ class TaskState(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CLEANED = "cleaned"
+
+
+class LeaseStatus(str, Enum):
+    ACTIVE = "active"
+    RELEASED = "released"
+    STALE = "stale"
 
 
 @dataclass(frozen=True)
@@ -188,6 +213,36 @@ class TaskRecord:
             "head_commit": self.head_commit,
             "version": self.version,
             "definition": self.definition.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
+class Lease:
+    lease_id: str
+    task_id: str
+    worker_id: str
+    owner_pid: int | None
+    paths: tuple[str, ...]
+    canonical_paths: tuple[str, ...]
+    acquired_at: datetime
+    renewed_at: datetime
+    expires_at: datetime
+    status: LeaseStatus
+    generation: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "lease_id": self.lease_id,
+            "task_id": self.task_id,
+            "worker_id": self.worker_id,
+            "owner_pid": self.owner_pid,
+            "paths": list(self.paths),
+            "canonical_paths": list(self.canonical_paths),
+            "acquired_at": _format_timestamp(self.acquired_at),
+            "renewed_at": _format_timestamp(self.renewed_at),
+            "expires_at": _format_timestamp(self.expires_at),
+            "status": self.status.value,
+            "generation": self.generation,
         }
 
 

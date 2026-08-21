@@ -11,7 +11,24 @@ from typing import Any, Callable
 from .models import TaskDefinition, TaskRecord, TaskState
 
 
-DB_SCHEMA_VERSION = 1
+DB_SCHEMA_VERSION = 2
+
+_LEASES_TABLE_SQL = (
+    "CREATE TABLE IF NOT EXISTS leases ("
+    "lease_id TEXT NOT NULL, "
+    "task_id TEXT NOT NULL, "
+    "worker_id TEXT NOT NULL, "
+    "owner_pid INTEGER, "
+    "path_pattern TEXT NOT NULL, "
+    "canonical_pattern TEXT NOT NULL, "
+    "acquired_at TEXT NOT NULL, "
+    "renewed_at TEXT NOT NULL, "
+    "expires_at TEXT NOT NULL, "
+    "status TEXT NOT NULL, "
+    "generation INTEGER NOT NULL, "
+    "PRIMARY KEY (lease_id, canonical_pattern)"
+    ")"
+)
 
 _LEGAL_TRANSITIONS: dict[TaskState, frozenset[TaskState]] = {
     TaskState.PENDING: frozenset({TaskState.ASSIGNED, TaskState.BLOCKED}),
@@ -173,10 +190,16 @@ class TaskStore:
                     "state_version INTEGER NOT NULL"
                     ")"
                 )
+                self._create_leases_schema(connection)
                 connection.execute(
                     "INSERT INTO metadata(key, value) VALUES(?, ?)",
                     ("repo_root", str(self.repo_root)),
                 )
+                connection.execute(f"PRAGMA user_version = {DB_SCHEMA_VERSION}")
+                connection.commit()
+            elif version == 1:
+                connection.execute("BEGIN IMMEDIATE")
+                self._create_leases_schema(connection)
                 connection.execute(f"PRAGMA user_version = {DB_SCHEMA_VERSION}")
                 connection.commit()
             elif version != DB_SCHEMA_VERSION:
@@ -189,6 +212,18 @@ class TaskStore:
             raise
         finally:
             connection.close()
+
+    @staticmethod
+    def _create_leases_schema(connection: sqlite3.Connection) -> None:
+        connection.execute(_LEASES_TABLE_SQL)
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_leases_active_path "
+            "ON leases(status, expires_at, canonical_pattern)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_leases_task "
+            "ON leases(task_id, acquired_at)"
+        )
 
     def _verify_binding(self, connection: sqlite3.Connection) -> None:
         try:
