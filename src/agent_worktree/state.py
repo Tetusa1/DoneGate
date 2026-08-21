@@ -3,22 +3,27 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 from .models import (
+    CheckStatus,
     ExecutionResult,
     ExecutionStatus,
     TaskDefinition,
     TaskRecord,
     TaskState,
     TERMINAL_EXECUTION_STATES,
+    ValidationCheckResult,
+    ValidationReport,
+    ValidationStatus,
 )
 
 
-DB_SCHEMA_VERSION = 3
+DB_SCHEMA_VERSION = 4
 
 _LEASES_TABLE_SQL = (
     "CREATE TABLE IF NOT EXISTS leases ("
@@ -55,6 +60,20 @@ _EXECUTIONS_TABLE_SQL = (
     "artifact_dir TEXT NOT NULL, "
     "stdout_path TEXT NOT NULL, "
     "stderr_path TEXT NOT NULL"
+    ")"
+)
+
+_VALIDATIONS_TABLE_SQL = (
+    "CREATE TABLE IF NOT EXISTS validations ("
+    "validation_id TEXT PRIMARY KEY, "
+    "task_id TEXT NOT NULL, "
+    "execution_id TEXT, "
+    "worker_id TEXT, "
+    "status TEXT NOT NULL, "
+    "started_at TEXT NOT NULL, "
+    "finished_at TEXT, "
+    "report_json TEXT NOT NULL, "
+    "artifact_dir TEXT NOT NULL"
     ")"
 )
 
@@ -154,6 +173,38 @@ class InvalidExecutionTransition(StateStoreError):
         )
 
 
+class ValidationNotFoundError(StateStoreError):
+    """Raised when a requested validation does not exist."""
+
+    def __init__(self, validation_id: str) -> None:
+        self.validation_id = validation_id
+        super().__init__(f"ValidationNotFound: {validation_id}")
+
+
+class ValidationAlreadyRunningError(StateStoreError):
+    """Raised when the same task/execution already has an active validation."""
+
+    def __init__(self, task_id: str, execution_id: str | None) -> None:
+        self.task_id = task_id
+        self.execution_id = execution_id
+        suffix = execution_id if execution_id is not None else "<none>"
+        super().__init__(
+            f"ValidationAlreadyRunning: task_id={task_id}, execution_id={suffix}"
+        )
+
+
+class InvalidValidationTransition(StateStoreError):
+    """Raised when a validation report is finalized more than once."""
+
+    def __init__(self, validation_id: str, current: ValidationStatus) -> None:
+        self.validation_id = validation_id
+        self.current_status = current
+        super().__init__(
+            f"InvalidValidationTransition: validation_id={validation_id}, "
+            f"current_status={current.value}"
+        )
+
+
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -249,6 +300,7 @@ class TaskStore:
                 )
                 self._create_leases_schema(connection)
                 self._create_execution_schema(connection)
+                self._create_validation_schema(connection)
                 connection.execute(
                     "INSERT INTO metadata(key, value) VALUES(?, ?)",
                     ("repo_root", str(self.repo_root)),
@@ -259,11 +311,18 @@ class TaskStore:
                 connection.execute("BEGIN IMMEDIATE")
                 self._create_leases_schema(connection)
                 self._create_execution_schema(connection)
+                self._create_validation_schema(connection)
                 connection.execute(f"PRAGMA user_version = {DB_SCHEMA_VERSION}")
                 connection.commit()
             elif version == 2:
                 connection.execute("BEGIN IMMEDIATE")
                 self._create_execution_schema(connection)
+                self._create_validation_schema(connection)
+                connection.execute(f"PRAGMA user_version = {DB_SCHEMA_VERSION}")
+                connection.commit()
+            elif version == 3:
+                connection.execute("BEGIN IMMEDIATE")
+                self._create_validation_schema(connection)
                 connection.execute(f"PRAGMA user_version = {DB_SCHEMA_VERSION}")
                 connection.commit()
             elif version != DB_SCHEMA_VERSION:
@@ -299,6 +358,24 @@ class TaskStore:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_executions_incomplete "
             "ON executions(status, created_at)"
+        )
+
+    @staticmethod
+    def _create_validation_schema(connection: sqlite3.Connection) -> None:
+        connection.execute(_VALIDATIONS_TABLE_SQL)
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_validations_task "
+            "ON validations(task_id, started_at)"
+        )
+        connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_validations_active_execution "
+            "ON validations(task_id, execution_id) "
+            "WHERE status = 'running' AND execution_id IS NOT NULL"
+        )
+        connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_validations_active_task "
+            "ON validations(task_id) "
+            "WHERE status = 'running' AND execution_id IS NULL"
         )
 
     def _verify_binding(self, connection: sqlite3.Connection) -> None:
@@ -660,6 +737,129 @@ class TaskStore:
             connection.close()
         return self.get_execution(execution_id)
 
+    def begin_validation(self, report: ValidationReport) -> ValidationReport:
+        if not isinstance(report, ValidationReport):
+            raise StateStoreError("begin_validation requires a ValidationReport")
+        if report.status is not ValidationStatus.RUNNING:
+            raise StateStoreError("new validations must start in running state")
+        _validation_id(report.validation_id)
+        _timestamp(report.started_at)
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            if connection.execute(
+                "SELECT 1 FROM tasks WHERE task_id = ?", (report.task_id,)
+            ).fetchone() is None:
+                raise TaskNotFoundError(report.task_id)
+            try:
+                connection.execute(
+                    "INSERT INTO validations("
+                    "validation_id, task_id, execution_id, worker_id, status, started_at, "
+                    "finished_at, report_json, artifact_dir"
+                    ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        report.validation_id,
+                        report.task_id,
+                        report.execution_id,
+                        report.worker_id,
+                        report.status.value,
+                        _timestamp(report.started_at),
+                        _timestamp(report.finished_at),
+                        json.dumps(report.to_dict(), ensure_ascii=False, sort_keys=True),
+                        report.artifact_dir,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ValidationAlreadyRunningError(
+                    report.task_id, report.execution_id
+                ) from exc
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+        return self.get_validation(report.validation_id)
+
+    def finish_validation(self, report: ValidationReport) -> ValidationReport:
+        if not isinstance(report, ValidationReport):
+            raise StateStoreError("finish_validation requires a ValidationReport")
+        if report.status is ValidationStatus.RUNNING:
+            raise StateStoreError("finished validation cannot remain running")
+        validation_id = _validation_id(report.validation_id)
+        finished_text = _timestamp(report.finished_at)
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM validations WHERE validation_id = ?", (validation_id,)
+            ).fetchone()
+            if row is None:
+                raise ValidationNotFoundError(validation_id)
+            if (
+                row["task_id"] != report.task_id
+                or row["execution_id"] != report.execution_id
+                or row["worker_id"] != report.worker_id
+                or row["artifact_dir"] != report.artifact_dir
+            ):
+                raise StateStoreError("validation report identity does not match stored state")
+            current = _validation_status(row["status"], validation_id)
+            if current is not ValidationStatus.RUNNING:
+                raise InvalidValidationTransition(validation_id, current)
+            connection.execute(
+                "UPDATE validations SET status = ?, finished_at = ?, report_json = ? "
+                "WHERE validation_id = ? AND status = ?",
+                (
+                    report.status.value,
+                    finished_text,
+                    json.dumps(report.to_dict(), ensure_ascii=False, sort_keys=True),
+                    validation_id,
+                    ValidationStatus.RUNNING.value,
+                ),
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+        return self.get_validation(validation_id)
+
+    def get_validation(self, validation_id: str) -> ValidationReport:
+        validation_id = _validation_id(validation_id)
+        connection = self._connect()
+        try:
+            row = connection.execute(
+                "SELECT * FROM validations WHERE validation_id = ?", (validation_id,)
+            ).fetchone()
+        except sqlite3.Error as exc:
+            raise StateStoreError("cannot read validation state") from exc
+        finally:
+            connection.close()
+        if row is None:
+            raise ValidationNotFoundError(validation_id)
+        return self._row_to_validation(row)
+
+    def list_validations(self, task_id: str | None = None) -> tuple[ValidationReport, ...]:
+        connection = self._connect()
+        try:
+            if task_id is None:
+                rows = connection.execute(
+                    "SELECT * FROM validations ORDER BY started_at, validation_id"
+                ).fetchall()
+            else:
+                task_id = _task_id(task_id)
+                rows = connection.execute(
+                    "SELECT * FROM validations WHERE task_id = ? "
+                    "ORDER BY started_at, validation_id",
+                    (task_id,),
+                ).fetchall()
+        except sqlite3.Error as exc:
+            raise StateStoreError("cannot list validations") from exc
+        finally:
+            connection.close()
+        return tuple(self._row_to_validation(row) for row in rows)
+
     def _row_to_record(self, row: sqlite3.Row) -> TaskRecord:
         task_id = row["task_id"]
         state = _stored_state(row["state"], task_id)
@@ -745,6 +945,28 @@ class TaskStore:
             stderr_path=row["stderr_path"],
         )
 
+    def _row_to_validation(self, row: sqlite3.Row) -> ValidationReport:
+        validation_id = row["validation_id"]
+        try:
+            payload: Any = json.loads(row["report_json"])
+            if not isinstance(payload, dict):
+                raise ValueError("report is not an object")
+            report = _validation_from_mapping(payload, validation_id)
+            if (
+                report.validation_id != validation_id
+                or report.task_id != row["task_id"]
+                or report.execution_id != row["execution_id"]
+                or report.worker_id != row["worker_id"]
+                or report.status.value != row["status"]
+                or report.artifact_dir != row["artifact_dir"]
+            ):
+                raise ValueError("validation report does not match stored summary")
+            return report
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise StateCorruptionError(
+                f"invalid validation report: {validation_id}"
+            ) from exc
+
 
 def _canonical_root(value: str) -> str:
     return str(Path(value).expanduser().resolve(strict=False)).casefold()
@@ -775,6 +997,123 @@ def _execution_status(value: object, execution_id: str) -> ExecutionStatus:
         return ExecutionStatus(value)
     except (TypeError, ValueError) as exc:
         raise StateCorruptionError(f"invalid execution status: {execution_id}") from exc
+
+
+def _validation_id(value: str) -> str:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or "\x00" in value
+        or "/" in value
+        or "\\" in value
+        or value in {".", ".."}
+    ):
+        raise StateStoreError("validation_id must be a safe non-empty string")
+    return value
+
+
+def _validation_status(value: object, validation_id: str) -> ValidationStatus:
+    try:
+        return ValidationStatus(value)
+    except (TypeError, ValueError) as exc:
+        raise StateCorruptionError(f"invalid validation status: {validation_id}") from exc
+
+
+def _validation_from_mapping(payload: dict[str, Any], validation_id: str) -> ValidationReport:
+    def optional_text(name: str) -> str | None:
+        value = payload.get(name)
+        if value is not None and not isinstance(value, str):
+            raise ValueError(f"invalid {name}")
+        return value
+
+    status = _validation_status(payload.get("status"), validation_id)
+    started_at = _parse_timestamp(payload.get("started_at"), "started_at", validation_id)
+    finished_at = _parse_timestamp(payload.get("finished_at"), "finished_at", validation_id)
+    if started_at is None or finished_at is None:
+        raise ValueError("validation timestamps are required")
+    execution_value = payload.get("execution_status")
+    execution_status = (
+        None
+        if execution_value is None
+        else ExecutionStatus(execution_value)
+    )
+    check_results: list[ValidationCheckResult] = []
+    raw_checks = payload.get("required_check_results", [])
+    if not isinstance(raw_checks, list):
+        raise ValueError("invalid required_check_results")
+    for raw in raw_checks:
+        if not isinstance(raw, dict):
+            raise ValueError("invalid required check result")
+        check_started = _parse_timestamp(raw.get("started_at"), "check.started_at", validation_id)
+        check_finished = _parse_timestamp(raw.get("finished_at"), "check.finished_at", validation_id)
+        command = raw.get("command")
+        if (
+            check_started is None
+            or check_finished is None
+            or not isinstance(command, list)
+            or not command
+            or any(not isinstance(item, str) for item in command)
+        ):
+            raise ValueError("invalid required check timestamps or command")
+        duration_value = raw.get("duration_seconds")
+        duration = float(duration_value)
+        if duration < 0 or not math.isfinite(duration):
+            raise ValueError("invalid required check duration")
+        check_results.append(
+            ValidationCheckResult(
+                name=required_text_from(raw, "name"),
+                command=tuple(command),
+                started_at=check_started,
+                finished_at=check_finished,
+                duration_seconds=duration,
+                exit_code=None if raw.get("exit_code") is None else int(raw["exit_code"]),
+                status=CheckStatus(raw.get("status")),
+                stdout_path=required_text_from(raw, "stdout_path"),
+                stderr_path=required_text_from(raw, "stderr_path"),
+            )
+        )
+    return ValidationReport(
+        validation_id=required_text_from(payload, "validation_id"),
+        task_id=required_text_from(payload, "task_id"),
+        execution_id=optional_text("execution_id"),
+        worker_id=optional_text("worker_id"),
+        status=status,
+        started_at=started_at,
+        finished_at=finished_at,
+        expected_branch=optional_text("expected_branch"),
+        actual_branch=optional_text("actual_branch"),
+        base_commit=optional_text("base_commit"),
+        reported_commit=optional_text("reported_commit"),
+        verified_commit=optional_text("verified_commit"),
+        actual_changed_files=_text_tuple(payload.get("actual_changed_files", [])),
+        allowlist_violations=_text_tuple(payload.get("allowlist_violations", [])),
+        denylist_violations=_text_tuple(payload.get("denylist_violations", [])),
+        required_check_results=tuple(check_results),
+        execution_status=execution_status,
+        lease_valid=_optional_bool(payload.get("lease_valid"), "lease_valid"),
+        blocking_reasons=_text_tuple(payload.get("blocking_reasons", [])),
+        artifact_dir=required_text_from(payload, "artifact_dir"),
+    )
+
+
+def required_text_from(payload: dict[str, Any], name: str) -> str:
+    value = payload.get(name)
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"missing {name}")
+    return value
+
+
+def _optional_bool(value: Any, name: str) -> bool | None:
+    if value is not None and not isinstance(value, bool):
+        raise ValueError(f"invalid {name}")
+    return value
+
+
+def _text_tuple(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise ValueError("expected list of strings")
+    return tuple(value)
 
 
 def _optional_timestamp(value: datetime | None) -> str | None:

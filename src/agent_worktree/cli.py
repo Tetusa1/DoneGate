@@ -10,7 +10,13 @@ from pathlib import Path
 
 from .git import GitRepository, GitRepositoryError
 from .models import TaskValidationError, load_task_file
-from .state import StateStoreError, TaskNotFoundError, TaskStore
+from .state import (
+    StateStoreError,
+    TaskNotFoundError,
+    TaskStore,
+    ValidationAlreadyRunningError,
+)
+from .validate import CompletionValidator
 
 
 def _not_implemented(action: str) -> int:
@@ -67,6 +73,51 @@ def _task_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _task_validate(args: argparse.Namespace) -> int:
+    try:
+        report = CompletionValidator(_store_from_cwd()).validate(args.task)
+    except ValidationAlreadyRunningError as exc:
+        if args.json:
+            print(json.dumps({"status": "blocked", "error": str(exc)}, sort_keys=True))
+        else:
+            print(str(exc), file=sys.stderr)
+        return 2
+    except TaskNotFoundError as exc:
+        if args.json:
+            print(json.dumps({"status": "blocked", "error": str(exc)}, sort_keys=True))
+        else:
+            print(str(exc), file=sys.stderr)
+        return 2
+    except (GitRepositoryError, StateStoreError) as exc:
+        if args.json:
+            print(json.dumps({"status": "blocked", "error": str(exc)}, sort_keys=True))
+        else:
+            print(f"TASK_VALIDATE_FAILED: {exc}", file=sys.stderr)
+        return 2
+
+    if args.json:
+        print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(f"TASK_ID: {report.task_id}")
+        print(f"VALIDATION_ID: {report.validation_id}")
+        print(f"STATUS: {report.status.value}")
+        print(f"EXECUTION: {report.execution_id or 'missing'}")
+        print(f"COMMIT: {report.verified_commit or 'missing'}")
+        print(
+            "CHANGED_FILES: "
+            + (", ".join(report.actual_changed_files) if report.actual_changed_files else "-")
+        )
+        check_text = ", ".join(
+            f"{check.name}={check.status.value}" for check in report.required_check_results
+        )
+        print(f"CHECKS: {check_text or '-'}")
+        print(
+            "BLOCKERS: "
+            + (", ".join(report.blocking_reasons) if report.blocking_reasons else "-")
+        )
+    return 0 if report.status.value == "passed" else 1
+
+
 def _store_from_cwd() -> TaskStore:
     repository = GitRepository(Path.cwd())
     override = os.environ.get("AGENT_WORKTREE_STATE_PATH")
@@ -93,7 +144,12 @@ def _build_parser() -> argparse.ArgumentParser:
     status.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     status.set_defaults(handler=_task_status)
 
-    for name in ("run", "validate", "cleanup"):
+    validate = task_commands.add_parser("validate", help="Validate a task completion")
+    validate.add_argument("--task", required=True, help="Task ID")
+    validate.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    validate.set_defaults(handler=_task_validate)
+
+    for name in ("run", "cleanup"):
         command = task_commands.add_parser(name, help=f"{name.title()} a task")
         command.add_argument("--task", required=True, help="Task ID")
         command.set_defaults(handler=lambda _args, action=f"task {name}": _not_implemented(action))

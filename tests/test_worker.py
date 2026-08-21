@@ -364,12 +364,12 @@ def test_v2_to_v3_migration_preserves_tasks_and_lease_history(tmp_path: Path) ->
         connection.execute("PRAGMA user_version = 2")
 
     migrated = TaskStore(root)
-    assert DB_SCHEMA_VERSION == 3
+    assert DB_SCHEMA_VERSION == 4
     assert migrated.get("migration").state is TaskState.ASSIGNED
     assert migrated.list_executions() == ()
     assert migrated.db_path.exists()
     with sqlite3.connect(migrated.db_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
         assert connection.execute("SELECT status FROM leases").fetchone()[0] == "released"
     finish_worktree(repository, created.worktree_path)
 

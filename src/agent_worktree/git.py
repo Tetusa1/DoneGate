@@ -156,11 +156,26 @@ class GitRepository:
     def current_head(self) -> str:
         return self._resolve_commit("HEAD")
 
+    def resolve_commit(self, ref: str) -> str:
+        """Resolve a commit reference to its full commit hash."""
+
+        return self._resolve_commit(ref)
+
+    def head_at(self, worktree_path: str | Path) -> str:
+        """Read HEAD from a registered worktree, not from task metadata."""
+
+        return self._commit_at(self._registered_path(worktree_path))
+
     def is_clean(self) -> bool:
         result = self._run_git(
             ["status", "--porcelain=v1", "--untracked-files=all"],
         )
         return not bool(result.stdout)
+
+    def is_clean_at(self, worktree_path: str | Path) -> bool:
+        """Check a registered worktree for tracked, staged, and untracked changes."""
+
+        return self._is_clean_at(self._registered_path(worktree_path))
 
     def branch_exists(self, name: str) -> bool:
         branch = self._validate_branch_name(name)
@@ -315,6 +330,57 @@ class GitRepository:
         if result.returncode != 0:
             return False
         return result.stdout.strip() == "commit"
+
+    def object_type(self, object_hash: str) -> str | None:
+        if not isinstance(object_hash, str) or not _COMMIT_HASH_PATTERN.fullmatch(object_hash):
+            return None
+        result = self._run_git(["cat-file", "-t", object_hash], check=False)
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip()
+
+    def changed_files_between(self, base_commit: str, commit: str) -> tuple[str, ...]:
+        """Return committed changed paths in a machine-readable commit range.
+
+        Rename and copy records contribute both their old and new paths so
+        allowlist and denylist policy cannot hide the source side of a move.
+        """
+
+        base = self._resolve_commit(base_commit)
+        target = self._resolve_commit(commit)
+        result = self._run_git(
+            [
+                "diff",
+                "--name-status",
+                "-z",
+                "--find-renames",
+                "--find-copies",
+                "--no-ext-diff",
+                base,
+                target,
+            ],
+            text=False,
+        )
+        raw = result.stdout
+        if not isinstance(raw, bytes):
+            raise GitRepositoryError("Git diff did not return byte output")
+        fields = raw.split(b"\0")
+        paths: set[str] = set()
+        index = 0
+        while index < len(fields):
+            status_raw = fields[index]
+            index += 1
+            if not status_raw:
+                continue
+            status = os.fsdecode(status_raw)
+            count = 2 if status[:1] in {"R", "C"} else 1
+            if index + count > len(fields):
+                raise GitRepositoryError("Git diff omitted a changed path")
+            for _ in range(count):
+                path = os.fsdecode(fields[index])
+                index += 1
+                paths.add(self._canonical_status_path(path))
+        return tuple(sorted(paths))
 
     def is_ancestor(self, base_commit: str, commit: str) -> bool:
         base = self._resolve_commit(base_commit)

@@ -110,22 +110,33 @@ def _path_list(value: Any, field: str) -> tuple[str, ...]:
 class RequiredCheck:
     name: str
     command: tuple[str, ...]
+    timeout_seconds: int = 300
 
     @classmethod
     def from_mapping(cls, value: Any, index: int) -> "RequiredCheck":
         mapping = _require_mapping(value, f"required_checks[{index}]")
-        unexpected = set(mapping) - {"name", "command"}
+        unexpected = set(mapping) - {"name", "command", "timeout_seconds"}
         if unexpected:
             raise TaskValidationError(
                 f"required_checks[{index}] has unknown fields: {sorted(unexpected)}"
             )
+        timeout = mapping.get("timeout_seconds", 300)
+        if isinstance(timeout, bool) or not isinstance(timeout, int) or not 0 < timeout <= 86_400:
+            raise TaskValidationError(
+                f"required_checks[{index}].timeout_seconds must be an integer from 1 to 86400"
+            )
         return cls(
             name=_require_nonempty_string(mapping.get("name"), f"required_checks[{index}].name"),
             command=_require_argv(mapping.get("command"), f"required_checks[{index}].command"),
+            timeout_seconds=timeout,
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {"name": self.name, "command": list(self.command)}
+        return {
+            "name": self.name,
+            "command": list(self.command),
+            "timeout_seconds": self.timeout_seconds,
+        }
 
 
 @dataclass(frozen=True)
@@ -307,6 +318,98 @@ class ExecutionResult:
             "artifact_dir": self.artifact_dir,
             "stdout_path": self.stdout_path,
             "stderr_path": self.stderr_path,
+        }
+
+
+class ValidationStatus(str, Enum):
+    RUNNING = "running"
+    PASSED = "passed"
+    FAILED = "failed"
+    BLOCKED = "blocked"
+
+
+class CheckStatus(str, Enum):
+    PASSED = "passed"
+    FAILED = "failed"
+    TIMED_OUT = "timed_out"
+    START_FAILED = "start_failed"
+
+
+@dataclass(frozen=True)
+class ValidationCheckResult:
+    name: str
+    command: tuple[str, ...]
+    started_at: datetime
+    finished_at: datetime
+    duration_seconds: float
+    exit_code: int | None
+    status: CheckStatus
+    stdout_path: str
+    stderr_path: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "command": list(self.command),
+            "started_at": _format_timestamp(self.started_at),
+            "finished_at": _format_timestamp(self.finished_at),
+            "duration_seconds": self.duration_seconds,
+            "exit_code": self.exit_code,
+            "status": self.status.value,
+            "stdout_path": self.stdout_path,
+            "stderr_path": self.stderr_path,
+        }
+
+
+@dataclass(frozen=True)
+class ValidationReport:
+    validation_id: str
+    task_id: str
+    execution_id: str | None
+    worker_id: str | None
+    status: ValidationStatus
+    started_at: datetime
+    finished_at: datetime
+    expected_branch: str | None
+    actual_branch: str | None
+    base_commit: str | None
+    reported_commit: str | None
+    verified_commit: str | None
+    actual_changed_files: tuple[str, ...]
+    allowlist_violations: tuple[str, ...]
+    denylist_violations: tuple[str, ...]
+    required_check_results: tuple[ValidationCheckResult, ...]
+    execution_status: ExecutionStatus | None
+    lease_valid: bool | None
+    blocking_reasons: tuple[str, ...]
+    artifact_dir: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "validation_id": self.validation_id,
+            "task_id": self.task_id,
+            "execution_id": self.execution_id,
+            "worker_id": self.worker_id,
+            "status": self.status.value,
+            "started_at": _format_timestamp(self.started_at),
+            "finished_at": _format_timestamp(self.finished_at),
+            "expected_branch": self.expected_branch,
+            "actual_branch": self.actual_branch,
+            "base_commit": self.base_commit,
+            "reported_commit": self.reported_commit,
+            "verified_commit": self.verified_commit,
+            "actual_changed_files": list(self.actual_changed_files),
+            "allowlist_violations": list(self.allowlist_violations),
+            "denylist_violations": list(self.denylist_violations),
+            "required_check_results": [
+                result.to_dict() for result in self.required_check_results
+            ],
+            "execution_status": self.execution_status.value
+            if self.execution_status is not None
+            else None,
+            "lease_valid": self.lease_valid,
+            "blocking_reasons": list(self.blocking_reasons),
+            "artifact_dir": self.artifact_dir,
         }
 
 
