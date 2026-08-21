@@ -4,7 +4,7 @@
 
 ## Status
 
-`agent-worktree` is in v0.1 development. This first slice defines and validates task files and provides the CLI surface. The Git worktree runtime, leases, worker execution, evidence collection, completion validation, and recovery engine are planned but intentionally not implemented yet.
+`agent-worktree` is in v0.1 development. This slice validates task files and persists a restart-safe SQLite task state machine. The Git worktree runtime, leases, worker execution, evidence collection, completion validation, and recovery engine are planned but intentionally not implemented yet.
 
 ## What
 
@@ -28,9 +28,11 @@ With Python 3.11+ and the project dependencies installed:
 ```bash
 python -m agent_worktree --help
 agent-worktree task create --file examples/task.yaml
+agent-worktree task status --task parser-validation
+agent-worktree task status --task parser-validation --json
 ```
 
-`task create` currently loads, validates, normalizes, and prints the task. It does not create a worktree or start a worker.
+`task create` validates, normalizes, and persists a task in `.agent-worktree/state/state.sqlite3` with initial state `pending`. It does not create a worktree or start a worker. `task status` reads the persisted record and supports human-readable or JSON output.
 
 ## CLI surface
 
@@ -44,7 +46,7 @@ agent-worktree recover --dry-run
 agent-worktree recover --apply
 ```
 
-Only `task create` is implemented in this development task. The other commands fail explicitly with `NOT_IMPLEMENTED_IN_TASK_01` rather than claiming a successful runtime operation.
+Only `task create` and `task status` are implemented in this development task. The other commands fail explicitly with `NOT_IMPLEMENTED_IN_TASK_01` rather than claiming a successful runtime operation.
 
 ## Task paths
 

@@ -32,10 +32,15 @@ def valid_task() -> dict:
     }
 
 
-def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
+def run_cli(*args: str, state_path: Path | None = None) -> subprocess.CompletedProcess[str]:
     environment = os.environ.copy()
     source = str(ROOT / "src")
     environment["PYTHONPATH"] = source + os.pathsep + environment.get("PYTHONPATH", "")
+    environment["GIT_CONFIG_COUNT"] = "1"
+    environment["GIT_CONFIG_KEY_0"] = "safe.directory"
+    environment["GIT_CONFIG_VALUE_0"] = str(ROOT)
+    if state_path is not None:
+        environment["AGENT_WORKTREE_STATE_PATH"] = str(state_path)
     return subprocess.run(
         [sys.executable, "-m", "agent_worktree", *args],
         cwd=ROOT,
@@ -88,8 +93,10 @@ def test_cli_help_passes() -> None:
     assert "task" in result.stdout
 
 
-def test_task_create_validates_example() -> None:
-    result = run_cli("task", "create", "--file", "examples/task.yaml")
+def test_task_create_validates_example(tmp_path: Path) -> None:
+    result = run_cli(
+        "task", "create", "--file", "examples/task.yaml", state_path=tmp_path / "state.sqlite3"
+    )
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
     assert payload["status"] == "validated"

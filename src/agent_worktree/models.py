@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Mapping, Sequence
 
@@ -116,6 +118,16 @@ class WorktreeInfo:
     detached: bool = False
 
 
+class TaskState(str, Enum):
+    PENDING = "pending"
+    ASSIGNED = "assigned"
+    RUNNING = "running"
+    BLOCKED = "blocked"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CLEANED = "cleaned"
+
+
 @dataclass(frozen=True)
 class CreatedWorktree:
     task_id: str
@@ -124,6 +136,59 @@ class CreatedWorktree:
     base_ref: str
     base_commit: str
     head_commit: str
+
+
+@dataclass(frozen=True)
+class TaskRecord:
+    task_id: str
+    state: TaskState
+    definition: "TaskDefinition"
+    created_at: datetime
+    updated_at: datetime
+    assigned_at: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    cleaned_at: datetime | None = None
+    failure_reason: str | None = None
+    worktree_path: str | None = None
+    branch_name: str | None = None
+    base_commit: str | None = None
+    head_commit: str | None = None
+    version: int = 0
+
+    @property
+    def objective(self) -> str:
+        return self.definition.objective
+
+    @property
+    def base_ref(self) -> str:
+        return self.definition.base_ref
+
+    @property
+    def worker_id(self) -> str:
+        return self.definition.worker_id
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "task_id": self.task_id,
+            "state": self.state.value,
+            "objective": self.objective,
+            "base_ref": self.base_ref,
+            "worker_id": self.worker_id,
+            "created_at": _format_timestamp(self.created_at),
+            "updated_at": _format_timestamp(self.updated_at),
+            "assigned_at": _format_optional_timestamp(self.assigned_at),
+            "started_at": _format_optional_timestamp(self.started_at),
+            "finished_at": _format_optional_timestamp(self.finished_at),
+            "cleaned_at": _format_optional_timestamp(self.cleaned_at),
+            "failure_reason": self.failure_reason,
+            "worktree_path": self.worktree_path,
+            "branch_name": self.branch_name,
+            "base_commit": self.base_commit,
+            "head_commit": self.head_commit,
+            "version": self.version,
+            "definition": self.definition.to_dict(),
+        }
 
 
 @dataclass(frozen=True)
@@ -210,3 +275,11 @@ def load_task_file(path: Path) -> TaskDefinition:
     except yaml.YAMLError as exc:
         raise TaskValidationError(f"invalid YAML in task file: {path}") from exc
     return TaskDefinition.from_mapping(payload)
+
+
+def _format_timestamp(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _format_optional_timestamp(value: datetime | None) -> str | None:
+    return _format_timestamp(value) if value is not None else None
