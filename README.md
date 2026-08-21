@@ -1,0 +1,60 @@
+# agent-worktree
+
+> A local CLI for running coding agents in isolated Git worktrees with path ownership and evidence-based completion validation.
+
+## Status
+
+`agent-worktree` is in v0.1 development. This first slice defines and validates task files and provides the CLI surface. The Git worktree runtime, leases, worker execution, evidence collection, completion validation, and recovery engine are planned but intentionally not implemented yet.
+
+## What
+
+`agent-worktree` is a small local coding-agent worktree task runner. It accepts a provider-neutral command such as `codex`, `claude`, `python`, or another CLI program and gives that worker a structured task definition.
+
+## Why
+
+Coding agents need explicit boundaries because they can:
+
+- modify the wrong project;
+- collide with another agent on the same files;
+- write outside their assigned scope;
+- claim completion without trustworthy Git or test evidence.
+
+The planned project addresses those risks with isolated worktrees, path ownership, leases, generic worker commands, evidence collection, fail-closed validation, and cleanup/recovery.
+
+## Quick start
+
+With Python 3.11+ and the project dependencies installed:
+
+```bash
+python -m agent_worktree --help
+agent-worktree task create --file examples/task.yaml
+```
+
+`task create` currently loads, validates, normalizes, and prints the task. It does not create a worktree or start a worker.
+
+## CLI surface
+
+```text
+agent-worktree task create --file TASK_FILE
+agent-worktree task run --task TASK_ID
+agent-worktree task status --task TASK_ID
+agent-worktree task validate --task TASK_ID
+agent-worktree task cleanup --task TASK_ID
+agent-worktree recover --dry-run
+agent-worktree recover --apply
+```
+
+Only `task create` is implemented in this development task. The other commands fail explicitly with `NOT_IMPLEMENTED_IN_TASK_01` rather than claiming a successful runtime operation.
+
+## Task paths
+
+Task paths are repository-relative patterns. Absolute paths, empty paths, and `..` traversal are rejected at schema-validation time. Complex glob overlap and runtime ownership belong to the later lease manager.
+
+## Non-goals
+
+- not an LLM SDK;
+- not a prompt framework;
+- not a cloud agent platform;
+- not a multi-agent chat UI;
+- not an auto-merge bot;
+- not a financial or research workflow.

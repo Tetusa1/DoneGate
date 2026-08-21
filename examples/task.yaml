@@ -1,0 +1,36 @@
+schema_version: "0.1"
+
+task_id: "parser-validation"
+
+objective: "Add validation for malformed parser input."
+
+base_ref: "HEAD"
+
+read_paths:
+  - "src/**"
+  - "tests/**"
+
+write_paths:
+  - "src/parser.py"
+  - "tests/test_parser.py"
+
+deny_paths:
+  - ".env"
+  - "secrets/**"
+  - ".github/workflows/**"
+
+worker_id: "local-agent"
+
+worker_command:
+  - "python"
+  - "worker.py"
+
+timeout_seconds: 1800
+
+required_checks:
+  - name: "unit-tests"
+    command:
+      - "python"
+      - "-m"
+      - "pytest"
+      - "-q"

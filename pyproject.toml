@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-worktree"
+version = "0.1.0"
+description = "A local CLI for coding-agent tasks with isolated worktrees and evidence-based completion validation."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [
+  { name = "agent-worktree contributors" },
+]
+dependencies = [
+  "PyYAML>=6.0,<7",
+]
+
+[project.scripts]
+agent-worktree = "agent_worktree.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
