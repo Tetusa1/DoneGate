@@ -153,6 +153,26 @@ class LeaseStatus(str, Enum):
     STALE = "stale"
 
 
+class ExecutionStatus(str, Enum):
+    CREATED = "created"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    TIMED_OUT = "timed_out"
+    CANCELLED = "cancelled"
+
+
+ExecutionState = ExecutionStatus
+TERMINAL_EXECUTION_STATES = frozenset(
+    {
+        ExecutionStatus.SUCCEEDED,
+        ExecutionStatus.FAILED,
+        ExecutionStatus.TIMED_OUT,
+        ExecutionStatus.CANCELLED,
+    }
+)
+
+
 @dataclass(frozen=True)
 class CreatedWorktree:
     task_id: str
@@ -243,6 +263,50 @@ class Lease:
             "expires_at": _format_timestamp(self.expires_at),
             "status": self.status.value,
             "generation": self.generation,
+        }
+
+
+@dataclass(frozen=True)
+class ExecutionResult:
+    execution_id: str
+    task_id: str
+    worker_id: str
+    status: ExecutionStatus
+    command: tuple[str, ...]
+    worktree_path: str
+    pid: int | None
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+    duration_seconds: float | None
+    exit_code: int | None
+    timeout_seconds: float
+    artifact_dir: str
+    stdout_path: str
+    stderr_path: str
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.status in TERMINAL_EXECUTION_STATES
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "execution_id": self.execution_id,
+            "task_id": self.task_id,
+            "worker_id": self.worker_id,
+            "status": self.status.value,
+            "command": list(self.command),
+            "worktree_path": self.worktree_path,
+            "pid": self.pid,
+            "created_at": _format_timestamp(self.created_at),
+            "started_at": _format_optional_timestamp(self.started_at),
+            "finished_at": _format_optional_timestamp(self.finished_at),
+            "duration_seconds": self.duration_seconds,
+            "exit_code": self.exit_code,
+            "timeout_seconds": self.timeout_seconds,
+            "artifact_dir": self.artifact_dir,
+            "stdout_path": self.stdout_path,
+            "stderr_path": self.stderr_path,
         }
 
 

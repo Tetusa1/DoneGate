@@ -8,10 +8,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from .models import TaskDefinition, TaskRecord, TaskState
+from .models import (
+    ExecutionResult,
+    ExecutionStatus,
+    TaskDefinition,
+    TaskRecord,
+    TaskState,
+    TERMINAL_EXECUTION_STATES,
+)
 
 
-DB_SCHEMA_VERSION = 2
+DB_SCHEMA_VERSION = 3
 
 _LEASES_TABLE_SQL = (
     "CREATE TABLE IF NOT EXISTS leases ("
@@ -27,6 +34,27 @@ _LEASES_TABLE_SQL = (
     "status TEXT NOT NULL, "
     "generation INTEGER NOT NULL, "
     "PRIMARY KEY (lease_id, canonical_pattern)"
+    ")"
+)
+
+_EXECUTIONS_TABLE_SQL = (
+    "CREATE TABLE IF NOT EXISTS executions ("
+    "execution_id TEXT PRIMARY KEY, "
+    "task_id TEXT NOT NULL, "
+    "worker_id TEXT NOT NULL, "
+    "command_json TEXT NOT NULL, "
+    "worktree_path TEXT NOT NULL, "
+    "pid INTEGER, "
+    "created_at TEXT NOT NULL, "
+    "started_at TEXT, "
+    "finished_at TEXT, "
+    "duration_seconds REAL, "
+    "exit_code INTEGER, "
+    "status TEXT NOT NULL, "
+    "timeout_seconds REAL NOT NULL, "
+    "artifact_dir TEXT NOT NULL, "
+    "stdout_path TEXT NOT NULL, "
+    "stderr_path TEXT NOT NULL"
     ")"
 )
 
@@ -95,6 +123,35 @@ class RepositoryBindingError(StateStoreError):
 
 class ConcurrentStateUpdateError(StateStoreError):
     """Raised when optimistic state versioning detects a lost update."""
+
+
+class ExecutionNotFoundError(StateStoreError):
+    """Raised when a requested execution does not exist."""
+
+    def __init__(self, execution_id: str) -> None:
+        self.execution_id = execution_id
+        super().__init__(f"ExecutionNotFound: {execution_id}")
+
+
+class DuplicateExecutionError(StateStoreError):
+    """Raised when an execution id would overwrite an existing artifact."""
+
+    def __init__(self, execution_id: str) -> None:
+        self.execution_id = execution_id
+        super().__init__(f"ExecutionAlreadyExists: {execution_id}")
+
+
+class InvalidExecutionTransition(StateStoreError):
+    """Raised when an execution status transition is not allowed."""
+
+    def __init__(self, execution_id: str, current: ExecutionStatus, requested: ExecutionStatus) -> None:
+        self.execution_id = execution_id
+        self.current_status = current
+        self.requested_status = requested
+        super().__init__(
+            f"InvalidExecutionTransition: execution_id={execution_id}, "
+            f"current_status={current.value}, requested_status={requested.value}"
+        )
 
 
 def utc_now() -> datetime:
@@ -191,6 +248,7 @@ class TaskStore:
                     ")"
                 )
                 self._create_leases_schema(connection)
+                self._create_execution_schema(connection)
                 connection.execute(
                     "INSERT INTO metadata(key, value) VALUES(?, ?)",
                     ("repo_root", str(self.repo_root)),
@@ -200,6 +258,12 @@ class TaskStore:
             elif version == 1:
                 connection.execute("BEGIN IMMEDIATE")
                 self._create_leases_schema(connection)
+                self._create_execution_schema(connection)
+                connection.execute(f"PRAGMA user_version = {DB_SCHEMA_VERSION}")
+                connection.commit()
+            elif version == 2:
+                connection.execute("BEGIN IMMEDIATE")
+                self._create_execution_schema(connection)
                 connection.execute(f"PRAGMA user_version = {DB_SCHEMA_VERSION}")
                 connection.commit()
             elif version != DB_SCHEMA_VERSION:
@@ -223,6 +287,18 @@ class TaskStore:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_leases_task "
             "ON leases(task_id, acquired_at)"
+        )
+
+    @staticmethod
+    def _create_execution_schema(connection: sqlite3.Connection) -> None:
+        connection.execute(_EXECUTIONS_TABLE_SQL)
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_executions_task "
+            "ON executions(task_id, created_at)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_executions_incomplete "
+            "ON executions(status, created_at)"
         )
 
     def _verify_binding(self, connection: sqlite3.Connection) -> None:
@@ -399,6 +475,191 @@ class TaskStore:
             connection.close()
         return self.get(task_id)
 
+    def create_execution(self, execution: ExecutionResult) -> ExecutionResult:
+        if not isinstance(execution, ExecutionResult):
+            raise StateStoreError("create_execution requires an ExecutionResult")
+        if execution.status is not ExecutionStatus.CREATED:
+            raise StateStoreError("new executions must start in created state")
+        _execution_id(execution.execution_id)
+        if not execution.command:
+            raise StateStoreError("execution command cannot be empty")
+        if execution.timeout_seconds <= 0:
+            raise StateStoreError("execution timeout must be positive")
+        _timestamp(execution.created_at)
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            if connection.execute(
+                "SELECT 1 FROM tasks WHERE task_id = ?", (execution.task_id,)
+            ).fetchone() is None:
+                raise TaskNotFoundError(execution.task_id)
+            try:
+                connection.execute(
+                    "INSERT INTO executions("
+                    "execution_id, task_id, worker_id, command_json, worktree_path, pid, "
+                    "created_at, started_at, finished_at, duration_seconds, exit_code, status, "
+                    "timeout_seconds, artifact_dir, stdout_path, stderr_path"
+                    ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        execution.execution_id,
+                        execution.task_id,
+                        execution.worker_id,
+                        json.dumps(list(execution.command), ensure_ascii=False, separators=(",", ":")),
+                        execution.worktree_path,
+                        execution.pid,
+                        _timestamp(execution.created_at),
+                        _optional_timestamp(execution.started_at),
+                        _optional_timestamp(execution.finished_at),
+                        execution.duration_seconds,
+                        execution.exit_code,
+                        execution.status.value,
+                        execution.timeout_seconds,
+                        execution.artifact_dir,
+                        execution.stdout_path,
+                        execution.stderr_path,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise DuplicateExecutionError(execution.execution_id) from exc
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+        return self.get_execution(execution.execution_id)
+
+    def get_execution(self, execution_id: str) -> ExecutionResult:
+        execution_id = _execution_id(execution_id)
+        connection = self._connect()
+        try:
+            row = connection.execute(
+                "SELECT * FROM executions WHERE execution_id = ?", (execution_id,)
+            ).fetchone()
+        except sqlite3.Error as exc:
+            raise StateStoreError("cannot read execution state") from exc
+        finally:
+            connection.close()
+        if row is None:
+            raise ExecutionNotFoundError(execution_id)
+        return self._row_to_execution(row)
+
+    def list_executions(self, task_id: str | None = None) -> tuple[ExecutionResult, ...]:
+        connection = self._connect()
+        try:
+            if task_id is None:
+                rows = connection.execute(
+                    "SELECT * FROM executions ORDER BY created_at, execution_id"
+                ).fetchall()
+            else:
+                task_id = _task_id(task_id)
+                rows = connection.execute(
+                    "SELECT * FROM executions WHERE task_id = ? "
+                    "ORDER BY created_at, execution_id",
+                    (task_id,),
+                ).fetchall()
+        except sqlite3.Error as exc:
+            raise StateStoreError("cannot list execution state") from exc
+        finally:
+            connection.close()
+        return tuple(self._row_to_execution(row) for row in rows)
+
+    def find_incomplete_executions(self) -> tuple[ExecutionResult, ...]:
+        connection = self._connect()
+        try:
+            rows = connection.execute(
+                "SELECT * FROM executions WHERE status = ? "
+                "ORDER BY created_at, execution_id",
+                (ExecutionStatus.RUNNING.value,),
+            ).fetchall()
+        except sqlite3.Error as exc:
+            raise StateStoreError("cannot list incomplete executions") from exc
+        finally:
+            connection.close()
+        return tuple(self._row_to_execution(row) for row in rows)
+
+    def start_execution(
+        self, execution_id: str, *, pid: int, started_at: datetime
+    ) -> ExecutionResult:
+        execution_id = _execution_id(execution_id)
+        started_text = _timestamp(started_at)
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM executions WHERE execution_id = ?", (execution_id,)
+            ).fetchone()
+            if row is None:
+                raise ExecutionNotFoundError(execution_id)
+            current = _execution_status(row["status"], execution_id)
+            if current is not ExecutionStatus.CREATED:
+                raise InvalidExecutionTransition(execution_id, current, ExecutionStatus.RUNNING)
+            connection.execute(
+                "UPDATE executions SET status = ?, pid = ?, started_at = ? "
+                "WHERE execution_id = ? AND status = ?",
+                (
+                    ExecutionStatus.RUNNING.value,
+                    pid,
+                    started_text,
+                    execution_id,
+                    ExecutionStatus.CREATED.value,
+                ),
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+        return self.get_execution(execution_id)
+
+    def finish_execution(
+        self,
+        execution_id: str,
+        *,
+        status: ExecutionStatus,
+        finished_at: datetime,
+        exit_code: int | None,
+        duration_seconds: float | None,
+    ) -> ExecutionResult:
+        execution_id = _execution_id(execution_id)
+        if status not in TERMINAL_EXECUTION_STATES:
+            raise StateStoreError("execution finish status must be terminal")
+        finished_text = _timestamp(finished_at)
+        if duration_seconds is not None and duration_seconds < 0:
+            raise StateStoreError("execution duration cannot be negative")
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM executions WHERE execution_id = ?", (execution_id,)
+            ).fetchone()
+            if row is None:
+                raise ExecutionNotFoundError(execution_id)
+            current = _execution_status(row["status"], execution_id)
+            if current in TERMINAL_EXECUTION_STATES:
+                raise InvalidExecutionTransition(execution_id, current, status)
+            connection.execute(
+                "UPDATE executions SET status = ?, finished_at = ?, exit_code = ?, "
+                "duration_seconds = ? WHERE execution_id = ? AND status IN (?, ?)",
+                (
+                    status.value,
+                    finished_text,
+                    exit_code,
+                    duration_seconds,
+                    execution_id,
+                    ExecutionStatus.CREATED.value,
+                    ExecutionStatus.RUNNING.value,
+                ),
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+        return self.get_execution(execution_id)
+
     def _row_to_record(self, row: sqlite3.Row) -> TaskRecord:
         task_id = row["task_id"]
         state = _stored_state(row["state"], task_id)
@@ -435,6 +696,55 @@ class TaskStore:
             version=version,
         )
 
+    def _row_to_execution(self, row: sqlite3.Row) -> ExecutionResult:
+        execution_id = row["execution_id"]
+        try:
+            status = _execution_status(row["status"], execution_id)
+            command = json.loads(row["command_json"])
+            if (
+                not isinstance(command, list)
+                or not command
+                or any(not isinstance(item, str) or not item for item in command)
+            ):
+                raise ValueError("invalid command")
+            timeout = float(row["timeout_seconds"])
+            if timeout <= 0:
+                raise ValueError("invalid timeout")
+            duration = row["duration_seconds"]
+            if duration is not None:
+                duration = float(duration)
+                if duration < 0:
+                    raise ValueError("invalid duration")
+            pid = row["pid"]
+            if pid is not None:
+                pid = int(pid)
+            exit_code = row["exit_code"]
+            if exit_code is not None:
+                exit_code = int(exit_code)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise StateCorruptionError(f"invalid execution record: {execution_id}") from exc
+        created_at = _parse_timestamp(row["created_at"], "created_at", execution_id)
+        if created_at is None:
+            raise StateCorruptionError(f"missing execution created_at: {execution_id}")
+        return ExecutionResult(
+            execution_id=execution_id,
+            task_id=row["task_id"],
+            worker_id=row["worker_id"],
+            status=status,
+            command=tuple(command),
+            worktree_path=row["worktree_path"],
+            pid=pid,
+            created_at=created_at,
+            started_at=_parse_timestamp(row["started_at"], "started_at", execution_id),
+            finished_at=_parse_timestamp(row["finished_at"], "finished_at", execution_id),
+            duration_seconds=duration,
+            exit_code=exit_code,
+            timeout_seconds=timeout,
+            artifact_dir=row["artifact_dir"],
+            stdout_path=row["stdout_path"],
+            stderr_path=row["stderr_path"],
+        )
+
 
 def _canonical_root(value: str) -> str:
     return str(Path(value).expanduser().resolve(strict=False)).casefold()
@@ -444,6 +754,31 @@ def _task_id(value: str) -> str:
     if not isinstance(value, str) or not value or value != value.strip() or "\x00" in value:
         raise StateStoreError("task_id must be a non-empty string")
     return value
+
+
+def _execution_id(value: str) -> str:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or "\x00" in value
+        or "/" in value
+        or "\\" in value
+        or value in {".", ".."}
+    ):
+        raise StateStoreError("execution_id must be a safe non-empty string")
+    return value
+
+
+def _execution_status(value: object, execution_id: str) -> ExecutionStatus:
+    try:
+        return ExecutionStatus(value)
+    except (TypeError, ValueError) as exc:
+        raise StateCorruptionError(f"invalid execution status: {execution_id}") from exc
+
+
+def _optional_timestamp(value: datetime | None) -> str | None:
+    return _timestamp(value) if value is not None else None
 
 
 def _state(value: TaskState | str, task_id: str) -> TaskState:

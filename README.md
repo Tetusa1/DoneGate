@@ -4,7 +4,7 @@
 
 ## Status
 
-`agent-worktree` is in v0.1 development. This slice validates task files, persists a restart-safe SQLite task state machine, and provides a transactional path-lease core. The Git worktree runtime, worker execution, evidence collection, completion validation, and recovery engine are planned but intentionally not implemented yet.
+`agent-worktree` is in v0.1 development. This slice validates task files, persists a restart-safe SQLite task state machine, provides a transactional path-lease core, and runs generic non-interactive worker processes with persisted execution artifacts. Completion validation and recovery orchestration are still planned.
 
 ## What
 
@@ -19,7 +19,7 @@ Coding agents need explicit boundaries because they can:
 - write outside their assigned scope;
 - claim completion without trustworthy Git or test evidence.
 
-The planned project addresses those risks with isolated worktrees, path ownership, leases, generic worker commands, evidence collection, fail-closed validation, and cleanup/recovery. The lease manager currently provides the reusable path-ownership primitive; it is not wired into worker runtime commands yet.
+The planned project addresses those risks with isolated worktrees, path ownership, leases, generic worker commands, process evidence, fail-closed validation, and cleanup/recovery. The worker adapter is provider-neutral: it receives argv, uses a validated task worktree as cwd, captures stdout/stderr separately, and never decides whether a task is complete.
 
 ## Quick start
 
@@ -32,7 +32,7 @@ agent-worktree task status --task parser-validation
 agent-worktree task status --task parser-validation --json
 ```
 
-`task create` validates, normalizes, and persists a task in `.agent-worktree/state/state.sqlite3` with initial state `pending`. It does not create a worktree or start a worker. `task status` reads the persisted record and supports human-readable or JSON output.
+`task create` validates, normalizes, and persists a task in `.agent-worktree/state/state.sqlite3` with initial state `pending`. The Python worker API can run a task only after its Git worktree metadata and write lease preconditions are satisfied. Execution logs are written to `.agent-worktree/executions/<execution-id>/`; stdin is `DEVNULL` and worker commands run with `shell=False`.
 
 ## CLI surface
 
@@ -46,7 +46,26 @@ agent-worktree recover --dry-run
 agent-worktree recover --apply
 ```
 
-Only `task create` and `task status` are implemented in this development task. The other commands fail explicitly with `NOT_IMPLEMENTED_IN_TASK_01` rather than claiming a successful runtime operation.
+`task create` and `task status` are implemented. `task run` remains intentionally unavailable in the public CLI because this repository does not yet expose a complete public worktree/lease orchestration setup path. The other unavailable commands fail explicitly with `NOT_IMPLEMENTED_IN_TASK_01` rather than claiming a successful runtime operation.
+
+## Capability matrix
+
+Implemented:
+
+- task schema and persisted task state transitions;
+- Git worktree adapter;
+- transactional path leases;
+- generic argv-based worker process execution;
+- separate, streaming stdout/stderr execution artifacts;
+- timeout, cancellation, process-group termination, and restart-readable execution results.
+
+Not yet implemented:
+
+- completion validation or changed-files validation;
+- required-check execution or a completion gate;
+- automatic retry, repair, cleanup, or crash recovery orchestration;
+- provider-specific SDKs, parsers, prompts, or model integrations;
+- a public `task run` orchestration command.
 
 ## Task paths
 
