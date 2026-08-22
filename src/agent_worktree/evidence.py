@@ -49,6 +49,17 @@ class ValidationArtifact:
         }
 
 
+class RecoveryArtifact:
+    """Filesystem location for one recovery audit report."""
+
+    def __init__(self, directory: Path, report_path: Path) -> None:
+        self.directory = directory
+        self.report_path = report_path
+
+    def to_dict(self) -> dict[str, str]:
+        return {"directory": str(self.directory), "report_path": str(self.report_path)}
+
+
 @dataclass(frozen=True)
 class ExecutionArtifact:
     directory: Path
@@ -160,6 +171,65 @@ def read_validation_report(artifact_or_repo: ValidationArtifact | str | Path, va
         raise ArtifactError(f"cannot read validation report: {target}") from exc
     if not isinstance(payload, dict):
         raise ArtifactError(f"validation report must be an object: {target}")
+    return payload
+
+
+def recovery_artifact_paths(repo_root: str | Path, recovery_id: str) -> RecoveryArtifact:
+    root = Path(repo_root).expanduser().resolve()
+    safe_id = _safe_execution_id(recovery_id)
+    recovery_root = (root / ".agent-worktree" / "recovery").resolve(strict=False)
+    try:
+        recovery_root.relative_to(root)
+    except ValueError as exc:
+        raise UnsafeArtifactPathError("recovery artifact root escapes repository") from exc
+    directory = (recovery_root / safe_id).resolve(strict=False)
+    if directory.parent != recovery_root:
+        raise UnsafeArtifactPathError("recovery artifact path escapes repository")
+    return RecoveryArtifact(directory=directory, report_path=directory / "report.json")
+
+
+def create_recovery_artifact(repo_root: str | Path, recovery_id: str) -> RecoveryArtifact:
+    artifact = recovery_artifact_paths(repo_root, recovery_id)
+    if artifact.directory.exists():
+        raise ArtifactAlreadyExistsError(f"recovery artifact already exists: {recovery_id}")
+    try:
+        artifact.directory.parent.mkdir(parents=True, exist_ok=True)
+        artifact.directory.mkdir(exist_ok=False)
+    except FileExistsError as exc:
+        raise ArtifactAlreadyExistsError(
+            f"recovery artifact already exists: {recovery_id}"
+        ) from exc
+    except OSError as exc:
+        raise ArtifactError(f"cannot create recovery artifact: {artifact.directory}") from exc
+    return artifact
+
+
+def write_recovery_report(
+    artifact: RecoveryArtifact, report: Mapping[str, Any]
+) -> Path:
+    return write_execution_metadata(artifact.report_path, report)
+
+
+def read_recovery_report(
+    artifact_or_repo: RecoveryArtifact | str | Path,
+    recovery_id: str | None = None,
+) -> dict[str, Any]:
+    if isinstance(artifact_or_repo, RecoveryArtifact):
+        target = artifact_or_repo.report_path
+    elif recovery_id is not None:
+        target = recovery_artifact_paths(artifact_or_repo, recovery_id).report_path
+    else:
+        target = Path(artifact_or_repo).expanduser().resolve(strict=False)
+        if target.name != "report.json":
+            target = target / "report.json"
+    if not target.is_file():
+        raise ArtifactNotFoundError(f"recovery report not found: {target}")
+    try:
+        payload = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ArtifactError(f"cannot read recovery report: {target}") from exc
+    if not isinstance(payload, dict):
+        raise ArtifactError(f"recovery report must be an object: {target}")
     return payload
 
 

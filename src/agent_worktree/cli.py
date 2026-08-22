@@ -1,4 +1,4 @@
-"""Argparse CLI skeleton for agent-worktree Task 01."""
+"""Argparse CLI for agent-worktree task state, validation, and recovery."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .git import GitRepository, GitRepositoryError
 from .models import TaskValidationError, load_task_file
+from .recovery import CleanupError, CleanupOrchestrator, RecoveryOrchestrator
 from .state import (
     StateStoreError,
     TaskNotFoundError,
@@ -118,6 +119,67 @@ def _task_validate(args: argparse.Namespace) -> int:
     return 0 if report.status.value == "passed" else 1
 
 
+def _task_cleanup(args: argparse.Namespace) -> int:
+    try:
+        result = CleanupOrchestrator(_store_from_cwd()).cleanup(
+            args.task,
+            remove_branch=args.remove_branch,
+        )
+    except TaskNotFoundError as exc:
+        payload = {"status": "blocked", "error": str(exc)}
+        if args.json:
+            print(json.dumps(payload, sort_keys=True))
+        else:
+            print(str(exc), file=sys.stderr)
+        return 2
+    except (CleanupError, GitRepositoryError, StateStoreError) as exc:
+        payload = {"status": "blocked", "error": str(exc)}
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        else:
+            print(f"TASK_CLEANUP_BLOCKED: {exc}", file=sys.stderr)
+        return 2
+
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(f"TASK: {result.task_id}")
+        print(f"STATE_BEFORE: {result.state_before.value}")
+        print(f"WORKTREE: {result.worktree or '-'}")
+        print(f"LEASES: {', '.join(result.leases) or '-'}")
+        print(f"BRANCH: {result.branch or '-'}")
+        print(f"RESULT: {result.result}")
+        print(f"STATE_AFTER: {result.state_after.value}")
+        print(f"BLOCKERS: {', '.join(result.blockers) or '-'}")
+        print(f"ACTIONS: {', '.join(result.actions) or '-'}")
+    return 0
+
+
+def _recover(args: argparse.Namespace) -> int:
+    mode = "apply" if args.apply else "dry-run"
+    try:
+        report = RecoveryOrchestrator(_store_from_cwd()).recover(mode)
+    except (GitRepositoryError, StateStoreError) as exc:
+        if args.json:
+            print(json.dumps({"status": "blocked", "error": str(exc)}, sort_keys=True))
+        else:
+            print(f"RECOVERY_FAILED: {exc}", file=sys.stderr)
+        return 2
+
+    if args.json:
+        print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(f"RECOVERY_ID: {report.recovery_id}")
+        print(f"MODE: {report.mode}")
+        print(f"FINDINGS: {len(report.findings)}")
+        print(f"ACTIONS: {len(report.actions)}")
+        print(f"SKIPPED: {len(report.skipped)}")
+        print(f"ERRORS: {len(report.errors)}")
+        print(f"REPORT: {report.artifact_dir}")
+    return 0 if not report.errors else 1
+
+
 def _store_from_cwd() -> TaskStore:
     repository = GitRepository(Path.cwd())
     override = os.environ.get("AGENT_WORKTREE_STATE_PATH")
@@ -128,7 +190,7 @@ def _store_from_cwd() -> TaskStore:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agent-worktree",
-        description="Persist coding-agent task state before worktree runtime is enabled.",
+        description="Coordinate coding-agent task state, validation, cleanup, and recovery.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -149,16 +211,26 @@ def _build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     validate.set_defaults(handler=_task_validate)
 
-    for name in ("run", "cleanup"):
-        command = task_commands.add_parser(name, help=f"{name.title()} a task")
-        command.add_argument("--task", required=True, help="Task ID")
-        command.set_defaults(handler=lambda _args, action=f"task {name}": _not_implemented(action))
+    run = task_commands.add_parser("run", help="Run a task")
+    run.add_argument("--task", required=True, help="Task ID")
+    run.set_defaults(handler=lambda _args: _not_implemented("task run"))
+
+    cleanup = task_commands.add_parser("cleanup", help="Clean up a terminal task")
+    cleanup.add_argument("--task", required=True, help="Task ID")
+    cleanup.add_argument(
+        "--remove-branch",
+        action="store_true",
+        help="Delete the exact managed branch only after safe worktree removal",
+    )
+    cleanup.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    cleanup.set_defaults(handler=_task_cleanup)
 
     recover = commands.add_parser("recover", help="Recover stale runtime state")
     modes = recover.add_mutually_exclusive_group(required=True)
     modes.add_argument("--dry-run", action="store_true")
     modes.add_argument("--apply", action="store_true")
-    recover.set_defaults(handler=lambda _args: _not_implemented("recover"))
+    recover.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    recover.set_defaults(handler=_recover)
 
     return parser
 

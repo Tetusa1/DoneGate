@@ -440,6 +440,20 @@ class TaskStore:
             raise TaskNotFoundError(task_id)
         return self._row_to_record(row)
 
+    def list_tasks(self) -> tuple[TaskRecord, ...]:
+        """Return all persisted tasks in deterministic creation order."""
+
+        connection = self._connect()
+        try:
+            rows = connection.execute(
+                "SELECT * FROM tasks ORDER BY created_at, task_id"
+            ).fetchall()
+        except sqlite3.Error as exc:
+            raise StateStoreError("cannot list task state") from exc
+        finally:
+            connection.close()
+        return tuple(self._row_to_record(row) for row in rows)
+
     def transition(
         self,
         task_id: str,

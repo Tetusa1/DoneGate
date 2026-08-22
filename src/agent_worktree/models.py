@@ -414,6 +414,76 @@ class ValidationReport:
 
 
 @dataclass(frozen=True)
+class RecoveryFinding:
+    code: str
+    severity: str
+    description: str
+    task_id: str | None = None
+    execution_id: str | None = None
+    lease_id: str | None = None
+    worktree: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "severity": self.severity,
+            "description": self.description,
+            "task_id": self.task_id,
+            "execution_id": self.execution_id,
+            "lease_id": self.lease_id,
+            "worktree": self.worktree,
+        }
+
+
+@dataclass(frozen=True)
+class RecoveryAction:
+    code: str
+    status: str
+    description: str
+    task_id: str | None = None
+    execution_id: str | None = None
+    lease_id: str | None = None
+    worktree: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "status": self.status,
+            "description": self.description,
+            "task_id": self.task_id,
+            "execution_id": self.execution_id,
+            "lease_id": self.lease_id,
+            "worktree": self.worktree,
+        }
+
+
+@dataclass(frozen=True)
+class RecoveryReport:
+    recovery_id: str
+    mode: str
+    started_at: datetime
+    finished_at: datetime
+    findings: tuple[RecoveryFinding, ...]
+    actions: tuple[RecoveryAction, ...]
+    skipped: tuple[RecoveryAction, ...]
+    errors: tuple[str, ...]
+    artifact_dir: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "recovery_id": self.recovery_id,
+            "mode": self.mode,
+            "started_at": _format_timestamp(self.started_at),
+            "finished_at": _format_timestamp(self.finished_at),
+            "findings": [finding.to_dict() for finding in self.findings],
+            "actions": [action.to_dict() for action in self.actions],
+            "skipped": [action.to_dict() for action in self.skipped],
+            "errors": list(self.errors),
+            "artifact_dir": self.artifact_dir,
+        }
+
+
+@dataclass(frozen=True)
 class TaskDefinition:
     schema_version: str
     task_id: str
