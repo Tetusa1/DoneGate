@@ -15,6 +15,38 @@ Worker exit code 0 is not completion. Completion requires independent checks of:
 
 This is a local developer tool, not a host-security sandbox or a cloud agent platform.
 
+## Before you start
+
+Use `agent-worktree` inside an existing Git repository with Python 3.11+ and Git available on `PATH`. The repository must have at least one commit so Git can resolve the task's base ref, and its primary working tree should be clean before creating or running a task.
+
+Check the host repository first:
+
+```bash
+python --version
+git --version
+git status
+git log -1 --oneline
+git config user.name
+git config user.email
+```
+
+If this is a new repository with no commit yet, initialize it once and create its first commit; do not reinitialize an existing repository:
+
+```bash
+git init
+git add .
+git commit -m "initial commit"
+```
+
+If a worker is expected to commit and either identity value is missing, configure this repository locally (not with `--global`):
+
+```bash
+git config user.name "Your Name"
+git config user.email "you@example.com"
+```
+
+`agent-worktree` does not automatically run `git init`, change Git identity, stash, reset, clean, or commit the primary checkout. Resolve or commit changes reported by `git status` before running a task.
+
 ## Installation
 
 Python 3.11 or newer and Git are required.
