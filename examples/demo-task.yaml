@@ -1,0 +1,22 @@
+schema_version: "0.1"
+task_id: "demo-message"
+objective: "Make the deterministic demo worker update one message file."
+base_ref: "HEAD"
+read_paths:
+  - "examples/**"
+  - "src/**"
+write_paths:
+  - "src/message.txt"
+deny_paths:
+  - ".env"
+  - "secrets/**"
+worker_id: "demo-worker"
+worker_command:
+  - "python"
+  - "examples/demo_worker.py"
+timeout_seconds: 60
+required_checks:
+  - name: "demo-check"
+    command:
+      - "python"
+      - "examples/demo_check.py"

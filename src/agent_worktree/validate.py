@@ -141,7 +141,7 @@ class CompletionValidator:
             self._transition_after_validation(task_id, persisted)
             return persisted
 
-        if report.status is ValidationStatus.PASSED:
+        if report.status is ValidationStatus.PASSED and task.state is TaskState.RUNNING:
             try:
                 self.store.transition(task_id, TaskState.COMPLETED)
             except Exception as exc:
@@ -181,7 +181,7 @@ class CompletionValidator:
         lease_valid: bool | None = None
         writable = bool(task.definition.write_paths)
 
-        if task.state is not TaskState.RUNNING:
+        if task.state not in {TaskState.RUNNING, TaskState.COMPLETED}:
             reasons.append("task_not_running")
         if execution is None or execution.status is not ExecutionStatus.SUCCEEDED:
             reasons.append("worker_not_succeeded")

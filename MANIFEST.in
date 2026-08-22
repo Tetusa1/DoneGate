@@ -1,0 +1,18 @@
+include README.md LICENSE PROVENANCE.md CHANGELOG.md SECURITY.md CONTRIBUTING.md
+include src/message.txt
+recursive-include examples *.py *.yaml *.txt
+recursive-include tests *.py
+recursive-include .github *.yml
+global-exclude .agent-worktree/**
+global-exclude .venv/**
+global-exclude __pycache__/**
+global-exclude *.py[cod]
+global-exclude *.sqlite3
+global-exclude *.log
+global-exclude *.egg-info
+global-exclude *.egg-info/*
+recursive-exclude src/agent_worktree.egg-info *
+exclude src/agent_worktree.egg-info/SOURCES.txt
+prune build
+prune dist
+prune src/agent_worktree.egg-info

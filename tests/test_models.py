@@ -103,10 +103,10 @@ def test_task_create_validates_example(tmp_path: Path) -> None:
     assert payload["task"]["task_id"] == "parser-validation"
 
 
-def test_runtime_command_is_explicitly_not_implemented() -> None:
+def test_runtime_command_is_public_and_rejects_missing_task() -> None:
     result = run_cli("task", "run", "--task", "parser-validation")
     assert result.returncode != 0
-    assert "NOT_IMPLEMENTED_IN_TASK_01" in result.stderr
+    assert "TaskNotFound" in result.stderr
 
 
 def test_load_task_file_reads_yaml() -> None:

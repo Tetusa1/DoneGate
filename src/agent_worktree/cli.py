@@ -8,9 +8,11 @@ import os
 import sys
 from pathlib import Path
 
+from . import __version__
 from .git import GitRepository, GitRepositoryError
 from .models import TaskValidationError, load_task_file
 from .recovery import CleanupError, CleanupOrchestrator, RecoveryOrchestrator
+from .runner import TaskRunError, TaskRunner
 from .state import (
     StateStoreError,
     TaskNotFoundError,
@@ -20,9 +22,8 @@ from .state import (
 from .validate import CompletionValidator
 
 
-def _not_implemented(action: str) -> int:
-    print(f"NOT_IMPLEMENTED_IN_TASK_01: {action}", file=sys.stderr)
-    return 2
+def _error_payload(status: str, code: str, message: str) -> dict[str, str]:
+    return {"status": status, "code": code, "message": message}
 
 
 def _task_create(args: argparse.Namespace) -> int:
@@ -79,19 +80,19 @@ def _task_validate(args: argparse.Namespace) -> int:
         report = CompletionValidator(_store_from_cwd()).validate(args.task)
     except ValidationAlreadyRunningError as exc:
         if args.json:
-            print(json.dumps({"status": "blocked", "error": str(exc)}, sort_keys=True))
+            print(json.dumps(_error_payload("failed", "validation_already_running", str(exc)), sort_keys=True))
         else:
             print(str(exc), file=sys.stderr)
         return 2
     except TaskNotFoundError as exc:
         if args.json:
-            print(json.dumps({"status": "blocked", "error": str(exc)}, sort_keys=True))
+            print(json.dumps(_error_payload("failed", "task_not_found", str(exc)), sort_keys=True))
         else:
             print(str(exc), file=sys.stderr)
         return 2
     except (GitRepositoryError, StateStoreError) as exc:
         if args.json:
-            print(json.dumps({"status": "blocked", "error": str(exc)}, sort_keys=True))
+            print(json.dumps(_error_payload("failed", "validation_failed", str(exc)), sort_keys=True))
         else:
             print(f"TASK_VALIDATE_FAILED: {exc}", file=sys.stderr)
         return 2
@@ -119,6 +120,38 @@ def _task_validate(args: argparse.Namespace) -> int:
     return 0 if report.status.value == "passed" else 1
 
 
+def _task_run(args: argparse.Namespace) -> int:
+    try:
+        result = TaskRunner(_store_from_cwd()).run(args.task)
+    except TaskRunError as exc:
+        payload = _error_payload("failed", exc.code, str(exc))
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        else:
+            print(f"TASK_RUN_FAILED: {exc.code}: {exc}", file=sys.stderr)
+        return exc.exit_code
+    except (GitRepositoryError, StateStoreError) as exc:
+        payload = _error_payload("failed", "task_run_infrastructure_failed", str(exc))
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        else:
+            print(f"TASK_RUN_FAILED: {exc}", file=sys.stderr)
+        return 3
+
+    payload = result.to_dict()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        print(f"TASK: {result.task_id}")
+        print(f"STATUS: {result.status}")
+        print(f"STATE: {result.state.value}")
+        print(f"EXECUTION: {result.execution.execution_id if result.execution else '-'}")
+        print(f"VALIDATION: {getattr(result.validation, 'validation_id', '-')}")
+        print(f"WORKTREE: {result.worktree or '-'}")
+        print(f"ACTIONS: {', '.join(result.actions) or '-'}")
+    return 0 if result.status == "completed" else 1
+
+
 def _task_cleanup(args: argparse.Namespace) -> int:
     try:
         result = CleanupOrchestrator(_store_from_cwd()).cleanup(
@@ -126,14 +159,16 @@ def _task_cleanup(args: argparse.Namespace) -> int:
             remove_branch=args.remove_branch,
         )
     except TaskNotFoundError as exc:
-        payload = {"status": "blocked", "error": str(exc)}
+        payload = _error_payload("failed", "task_not_found", str(exc))
         if args.json:
             print(json.dumps(payload, sort_keys=True))
         else:
             print(str(exc), file=sys.stderr)
         return 2
     except (CleanupError, GitRepositoryError, StateStoreError) as exc:
-        payload = {"status": "blocked", "error": str(exc)}
+        payload = _error_payload(
+            "failed", getattr(exc, "code", "cleanup_failed"), str(exc)
+        )
         if args.json:
             print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         else:
@@ -162,7 +197,7 @@ def _recover(args: argparse.Namespace) -> int:
         report = RecoveryOrchestrator(_store_from_cwd()).recover(mode)
     except (GitRepositoryError, StateStoreError) as exc:
         if args.json:
-            print(json.dumps({"status": "blocked", "error": str(exc)}, sort_keys=True))
+            print(json.dumps(_error_payload("failed", "recovery_failed", str(exc)), sort_keys=True))
         else:
             print(f"RECOVERY_FAILED: {exc}", file=sys.stderr)
         return 2
@@ -192,6 +227,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="agent-worktree",
         description="Coordinate coding-agent task state, validation, cleanup, and recovery.",
     )
+    parser.add_argument("--version", action="version", version=__version__)
     commands = parser.add_subparsers(dest="command", required=True)
 
     task = commands.add_parser("task", help="Task operations")
@@ -213,7 +249,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     run = task_commands.add_parser("run", help="Run a task")
     run.add_argument("--task", required=True, help="Task ID")
-    run.set_defaults(handler=lambda _args: _not_implemented("task run"))
+    run.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    run.set_defaults(handler=_task_run)
 
     cleanup = task_commands.add_parser("cleanup", help="Clean up a terminal task")
     cleanup.add_argument("--task", required=True, help="Task ID")
