@@ -94,6 +94,8 @@ agent-worktree recover --dry-run [--json]
 agent-worktree recover --apply [--json]
 ```
 
+Human-readable `task run` streams worker stdout/stderr live while preserving execution logs. JSON mode keeps stdout machine-readable and stores worker logs in the execution artifacts.
+
 JSON mode writes one machine-readable document to stdout. Human diagnostics go to stderr on failure. Exit codes are stable for the v0.1 CLI: `0` means success, `1` means the task did not complete or validation failed, `2` means invalid usage or a refused task precondition, and `3` means infrastructure failure.
 
 ## Task format

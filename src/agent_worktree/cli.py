@@ -26,6 +26,27 @@ def _error_payload(status: str, code: str, message: str) -> dict[str, str]:
     return {"status": status, "code": code, "message": message}
 
 
+class _TerminalSink:
+    """Best-effort flushed terminal output that cannot break worker lifecycle."""
+
+    def __init__(self, stream) -> None:  # type: ignore[no-untyped-def]
+        self.stream = stream
+        self.broken = False
+
+    def __call__(self, text: str) -> None:
+        if self.broken:
+            return
+        try:
+            self.stream.write(text)
+            self.stream.flush()
+        except Exception:
+            self.broken = True
+
+
+def _human_line(sink: _TerminalSink, text: str) -> None:
+    sink(f"{text}\n")
+
+
 def _task_create(args: argparse.Namespace) -> int:
     try:
         task = load_task_file(Path(args.file))
@@ -121,34 +142,50 @@ def _task_validate(args: argparse.Namespace) -> int:
 
 
 def _task_run(args: argparse.Namespace) -> int:
+    stdout_sink = None if args.json else _TerminalSink(sys.stdout)
+    stderr_sink = None if args.json else _TerminalSink(sys.stderr)
+    if stdout_sink is not None:
+        _human_line(stdout_sink, f"Task: {args.task}")
+        _human_line(stdout_sink, "Worker output:")
+        _human_line(stdout_sink, "----------------------------------------")
     try:
-        result = TaskRunner(_store_from_cwd()).run(args.task)
+        result = TaskRunner(_store_from_cwd()).run(
+            args.task,
+            on_stdout=stdout_sink,
+            on_stderr=stderr_sink,
+        )
     except TaskRunError as exc:
         payload = _error_payload("failed", exc.code, str(exc))
         if args.json:
             print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
         else:
-            print(f"TASK_RUN_FAILED: {exc.code}: {exc}", file=sys.stderr)
+            _human_line(stderr_sink, f"TASK_RUN_FAILED: {exc.code}: {exc}")
         return exc.exit_code
     except (GitRepositoryError, StateStoreError) as exc:
         payload = _error_payload("failed", "task_run_infrastructure_failed", str(exc))
         if args.json:
             print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
         else:
-            print(f"TASK_RUN_FAILED: {exc}", file=sys.stderr)
+            _human_line(stderr_sink, f"TASK_RUN_FAILED: {exc}")
         return 3
 
     payload = result.to_dict()
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     else:
-        print(f"TASK: {result.task_id}")
-        print(f"STATUS: {result.status}")
-        print(f"STATE: {result.state.value}")
-        print(f"EXECUTION: {result.execution.execution_id if result.execution else '-'}")
-        print(f"VALIDATION: {getattr(result.validation, 'validation_id', '-')}")
-        print(f"WORKTREE: {result.worktree or '-'}")
-        print(f"ACTIONS: {', '.join(result.actions) or '-'}")
+        _human_line(stdout_sink, f"TASK: {result.task_id}")
+        _human_line(stdout_sink, f"STATUS: {result.status}")
+        _human_line(stdout_sink, f"STATE: {result.state.value}")
+        _human_line(
+            stdout_sink,
+            f"EXECUTION: {result.execution.execution_id if result.execution else '-'}",
+        )
+        _human_line(
+            stdout_sink,
+            f"VALIDATION: {getattr(result.validation, 'validation_id', '-')}",
+        )
+        _human_line(stdout_sink, f"WORKTREE: {result.worktree or '-'}")
+        _human_line(stdout_sink, f"ACTIONS: {', '.join(result.actions) or '-'}")
     return 0 if result.status == "completed" else 1
 
 

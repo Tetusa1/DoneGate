@@ -7,6 +7,7 @@ does not decide whether the task's changes are correct or complete.
 
 from __future__ import annotations
 
+import codecs
 import math
 import os
 import signal
@@ -17,7 +18,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 from .evidence import (
     ExecutionArtifact,
@@ -77,6 +78,9 @@ class WorkerWaitTimeout(WorkerError):
 
 class WorkerTerminationError(WorkerError):
     """Raised when a process group could not be confirmed stopped."""
+
+
+OutputCallback = Callable[[str], None]
 
 
 @dataclass
@@ -161,7 +165,11 @@ class WorkerProcess:
         command: Sequence[str] | None = None,
         environment: Mapping[str, str] | None = None,
         timeout_seconds: int | float | None = None,
+        on_stdout: OutputCallback | None = None,
+        on_stderr: OutputCallback | None = None,
     ) -> WorkerHandle:
+        _validate_output_callback(on_stdout, "on_stdout")
+        _validate_output_callback(on_stderr, "on_stderr")
         record = self.store.get(task_id)
         selected_worker = record.worker_id if worker_id is None else _identity(worker_id, "worker_id")
         if selected_worker != record.worker_id:
@@ -236,7 +244,12 @@ class WorkerProcess:
                 self._write_metadata(failed, start_error=str(exc))
                 raise WorkerStartError(execution_id, str(exc)) from exc
 
-            threads = self._start_log_pumps(process, artifact)
+            threads = self._start_log_pumps(
+                process,
+                artifact,
+                on_stdout=on_stdout,
+                on_stderr=on_stderr,
+            )
             handle = WorkerHandle(
                 execution_id=execution_id,
                 task_id=task_id,
@@ -473,20 +486,25 @@ class WorkerProcess:
         return subprocess.Popen(**options)  # type: ignore[arg-type]
 
     def _start_log_pumps(
-        self, process: subprocess.Popen[bytes], artifact: ExecutionArtifact
+        self,
+        process: subprocess.Popen[bytes],
+        artifact: ExecutionArtifact,
+        *,
+        on_stdout: OutputCallback | None,
+        on_stderr: OutputCallback | None,
     ) -> tuple[threading.Thread, ...]:
         if process.stdout is None or process.stderr is None:
             raise WorkerError("worker pipes were not created")
         threads = (
             threading.Thread(
                 target=_pump_output,
-                args=(process.stdout, artifact.stdout_path),
+                args=(process.stdout, artifact.stdout_path, on_stdout),
                 name=f"agent-worktree-{process.pid}-stdout",
                 daemon=True,
             ),
             threading.Thread(
                 target=_pump_output,
-                args=(process.stderr, artifact.stderr_path),
+                args=(process.stderr, artifact.stderr_path, on_stderr),
                 name=f"agent-worktree-{process.pid}-stderr",
                 daemon=True,
             ),
@@ -576,6 +594,11 @@ def _validate_command(command: Sequence[str]) -> tuple[str, ...]:
     return values
 
 
+def _validate_output_callback(callback: OutputCallback | None, field: str) -> None:
+    if callback is not None and not callable(callback):
+        raise WorkerPreconditionError(f"{field} must be callable")
+
+
 def _identity(value: str, field: str) -> str:
     if not isinstance(value, str) or not value or value != value.strip() or "\x00" in value:
         raise WorkerPreconditionError(f"{field} must be a non-empty string")
@@ -623,7 +646,11 @@ def _same_path(left: Path, right: Path) -> bool:
     return left_text.casefold() == right_text.casefold() if os.name == "nt" else left_text == right_text
 
 
-def _pump_output(pipe, target: Path) -> None:  # type: ignore[no-untyped-def]
+def _pump_output(
+    pipe, target: Path, callback: OutputCallback | None  # type: ignore[no-untyped-def]
+) -> None:
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    active_callback = callback
     try:
         with target.open("ab", buffering=0) as output:
             while True:
@@ -631,5 +658,20 @@ def _pump_output(pipe, target: Path) -> None:  # type: ignore[no-untyped-def]
                 if not chunk:
                     break
                 output.write(chunk)
+                if active_callback is not None:
+                    text = decoder.decode(chunk)
+                    if text:
+                        try:
+                            active_callback(text)
+                        except Exception:
+                            # Terminal observers must never interrupt artifact capture.
+                            active_callback = None
+            if active_callback is not None:
+                tail = decoder.decode(b"", final=True)
+                if tail:
+                    try:
+                        active_callback(tail)
+                    except Exception:
+                        pass
     finally:
         pipe.close()

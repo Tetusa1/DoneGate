@@ -104,6 +104,8 @@ def test_full_offline_cli_workflow_completes_and_cleans(tmp_path: Path) -> None:
     run = _cli(root, "task", "run", "--task", "demo-message", "--json")
     assert run.returncode == 0, run.stderr
     run_payload = json.loads(run.stdout)
+    assert "AGENT_WORKTREE_COMMIT:" not in run.stdout
+    assert "Worker output:" not in run.stdout
     assert run_payload["status"] == "completed"
     assert run_payload["state"] == "completed"
     assert run_payload["execution"]["status"] == "succeeded"
@@ -128,6 +130,23 @@ def test_full_offline_cli_workflow_completes_and_cleans(tmp_path: Path) -> None:
     assert validation_dir.is_dir()
     final_status = _cli(root, "task", "status", "--task", "demo-message", "--json")
     assert json.loads(final_status.stdout)["state"] == "cleaned"
+
+
+def test_human_cli_streams_worker_output_and_keeps_summary(tmp_path: Path) -> None:
+    root = _make_demo_repo(tmp_path)
+    task_file = _write_task(root, "human-output")
+    assert _cli(root, "task", "create", "--file", str(task_file)).returncode == 0
+
+    run = _cli(root, "task", "run", "--task", "human-output")
+    assert run.returncode == 0, run.stderr
+    assert "Task: human-output" in run.stdout
+    assert "Worker output:" in run.stdout
+    assert "AGENT_WORKTREE_COMMIT:" in run.stdout
+    assert "STATUS: completed" in run.stdout
+    assert "AGENT_WORKTREE_COMMIT:" not in run.stderr
+
+    cleanup = _cli(root, "task", "cleanup", "--task", "human-output")
+    assert cleanup.returncode == 0, cleanup.stderr
 
 
 def test_worker_exit_zero_but_allowlist_violation_fails_validation(tmp_path: Path) -> None:

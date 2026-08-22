@@ -5,6 +5,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -219,6 +220,77 @@ def test_success_captures_separate_output_and_does_not_complete_task(tmp_path: P
     finish_worktree(repository, worktree)
 
 
+def test_output_callbacks_stream_before_process_exit_and_preserve_artifacts(
+    tmp_path: Path,
+) -> None:
+    command = python_command(
+        "import sys,time; "
+        "print('STEP_ONE', flush=True); "
+        "print('ERR_ONE', file=sys.stderr, flush=True); "
+        "time.sleep(0.8); "
+        "print('STEP_TWO', flush=True); "
+        "print('ERR_TWO', file=sys.stderr, flush=True)"
+    )
+    _, repository, store, worktree = prepare_task(tmp_path, "live-output", command)
+    stdout_chunks: list[str] = []
+    stderr_chunks: list[str] = []
+    first_stdout = threading.Event()
+    first_stderr = threading.Event()
+
+    def on_stdout(text: str) -> None:
+        stdout_chunks.append(text)
+        first_stdout.set()
+
+    def on_stderr(text: str) -> None:
+        stderr_chunks.append(text)
+        first_stderr.set()
+
+    worker = WorkerProcess(store, repository=repository)
+    handle = worker.start(
+        "live-output",
+        on_stdout=on_stdout,
+        on_stderr=on_stderr,
+    )
+    assert first_stdout.wait(2)
+    assert first_stderr.wait(2)
+    assert handle.process.poll() is None
+
+    result = worker.wait(handle)
+    assert result.status is ExecutionStatus.SUCCEEDED
+    assert "STEP_ONE" in "".join(stdout_chunks)
+    assert "STEP_TWO" in "".join(stdout_chunks)
+    assert "ERR_ONE" in "".join(stderr_chunks)
+    assert "ERR_TWO" in "".join(stderr_chunks)
+    assert "ERR_ONE" not in "".join(stdout_chunks)
+    assert "STEP_ONE" not in "".join(stderr_chunks)
+    assert "STEP_ONE" in Path(result.stdout_path).read_text(encoding="utf-8")
+    assert "STEP_TWO" in Path(result.stdout_path).read_text(encoding="utf-8")
+    assert "ERR_ONE" in Path(result.stderr_path).read_text(encoding="utf-8")
+    assert "ERR_TWO" in Path(result.stderr_path).read_text(encoding="utf-8")
+    finish_worktree(repository, worktree)
+
+
+def test_output_callback_failure_does_not_interrupt_artifact_capture(tmp_path: Path) -> None:
+    command = python_command(
+        "print('BEFORE', flush=True); "
+        "print('AFTER', flush=True); "
+        "print('x'*100000, flush=True)"
+    )
+    _, repository, store, worktree = prepare_task(tmp_path, "broken-sink", command)
+
+    def broken_sink(_: str) -> None:
+        raise BrokenPipeError("terminal closed")
+
+    worker = WorkerProcess(store, repository=repository)
+    result = worker.wait(worker.start("broken-sink", on_stdout=broken_sink))
+    assert result.status is ExecutionStatus.SUCCEEDED
+    stdout = Path(result.stdout_path).read_text(encoding="utf-8")
+    assert "BEFORE" in stdout
+    assert "AFTER" in stdout
+    assert len(stdout) >= 100000
+    finish_worktree(repository, worktree)
+
+
 def test_failed_worker_updates_task_failed_and_captures_stderr(tmp_path: Path) -> None:
     command = python_command("import sys; print('failure', file=sys.stderr, flush=True); raise SystemExit(7)")
     root, repository, store, worktree = prepare_task(tmp_path, "failure", command)
@@ -293,12 +365,29 @@ def test_large_stdout_and_stderr_do_not_deadlock(tmp_path: Path) -> None:
     command = python_command(
         "import sys; sys.stdout.write('o'*1048576); sys.stdout.flush(); sys.stderr.write('e'*1048576); sys.stderr.flush()"
     )
+    stdout_size = [0]
+    stderr_size = [0]
+
+    def count_stdout(text: str) -> None:
+        stdout_size[0] += len(text)
+
+    def count_stderr(text: str) -> None:
+        stderr_size[0] += len(text)
+
     _, repository, store, worktree = prepare_task(tmp_path, "large-output", command)
     worker = WorkerProcess(store, repository=repository)
-    result = worker.wait(worker.start("large-output"))
+    result = worker.wait(
+        worker.start(
+            "large-output",
+            on_stdout=count_stdout,
+            on_stderr=count_stderr,
+        )
+    )
     assert result.status is ExecutionStatus.SUCCEEDED
     assert Path(result.stdout_path).stat().st_size >= 1024 * 1024
     assert Path(result.stderr_path).stat().st_size >= 1024 * 1024
+    assert stdout_size[0] >= 1024 * 1024
+    assert stderr_size[0] >= 1024 * 1024
     finish_worktree(repository, worktree)
 
 

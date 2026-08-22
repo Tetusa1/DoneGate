@@ -13,7 +13,7 @@ from .leases import LeaseManager
 from .models import ExecutionResult, ExecutionStatus, LeaseStatus, TaskRecord, TaskState
 from .state import StateStoreError, TaskStore, utc_now
 from .validate import CompletionValidator, ValidationError
-from .worker import WorkerError, WorkerProcess, WorkerStartError
+from .worker import OutputCallback, WorkerError, WorkerProcess, WorkerStartError
 
 
 COMMIT_CLAIM_PREFIX = "AGENT_WORKTREE_COMMIT:"
@@ -97,7 +97,13 @@ class TaskRunner:
         )
         self._clock = clock
 
-    def run(self, task_id: str) -> TaskRunResult:
+    def run(
+        self,
+        task_id: str,
+        *,
+        on_stdout: OutputCallback | None = None,
+        on_stderr: OutputCallback | None = None,
+    ) -> TaskRunResult:
         task = self.store.get(task_id)
         if task.state not in RUNNABLE_STATES:
             raise TaskRunPreconditionError(
@@ -124,7 +130,11 @@ class TaskRunner:
             ) from exc
 
         try:
-            handle = self.worker.start(task.task_id)
+            handle = self.worker.start(
+                task.task_id,
+                on_stdout=on_stdout,
+                on_stderr=on_stderr,
+            )
             actions.append("worker_started")
         except WorkerStartError as exc:
             execution = self.store.get_execution(exc.execution_id)
