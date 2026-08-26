@@ -839,6 +839,34 @@ class TaskStore:
             connection.close()
         return self.get_validation(validation_id)
 
+    def rollback_validation_claim(self, validation_id: str) -> None:
+        """Remove a running validation claim whose artifact was never materialized."""
+
+        validation_id = _validation_id(validation_id)
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT status FROM validations WHERE validation_id = ?", (validation_id,)
+            ).fetchone()
+            if row is None:
+                raise ValidationNotFoundError(validation_id)
+            current = _validation_status(row["status"], validation_id)
+            if current is not ValidationStatus.RUNNING:
+                raise InvalidValidationTransition(validation_id, current)
+            deleted = connection.execute(
+                "DELETE FROM validations WHERE validation_id = ? AND status = ?",
+                (validation_id, ValidationStatus.RUNNING.value),
+            )
+            if deleted.rowcount != 1:
+                raise StateStoreError(f"validation claim changed: {validation_id}")
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
     def get_validation(self, validation_id: str) -> ValidationReport:
         validation_id = _validation_id(validation_id)
         connection = self._connect()

@@ -110,7 +110,7 @@ class CompletionValidator:
         started_at = self._clock()
         worker_id = execution.worker_id if execution is not None else task.worker_id
         execution_status = execution.status if execution is not None else None
-        artifact = create_validation_artifact(self.repository.root, validation_id)
+        artifact = _unmaterialized_validation_artifact(self.repository.root, validation_id)
         initial = self._blank_report(
             validation_id=validation_id,
             task=task,
@@ -121,10 +121,11 @@ class CompletionValidator:
             worker_id=worker_id,
             execution_status=execution_status,
         )
+        self.store.begin_validation(initial)
         try:
-            self.store.begin_validation(initial)
+            artifact = create_validation_artifact(self.repository.root, validation_id)
         except Exception:
-            _remove_empty_validation_artifact(artifact)
+            self.store.rollback_validation_claim(validation_id)
             raise
 
         try:
@@ -650,12 +651,19 @@ def _kill_group(process: subprocess.Popen[bytes]) -> None:
         process.kill()
 
 
-def _remove_empty_validation_artifact(artifact: ValidationArtifact) -> None:
-    """Remove only the just-created empty artifact after reservation failure."""
+def _unmaterialized_validation_artifact(
+    repo_root: str | Path, validation_id: str
+) -> ValidationArtifact:
+    """Build the claim record's path without resolving or touching the filesystem."""
 
-    try:
-        artifact.checks_directory.rmdir()
-        artifact.directory.rmdir()
-    except OSError:
-        # Never remove a non-empty directory or another validation's data.
-        return
+    directory = (
+        Path(repo_root).expanduser().resolve()
+        / ".agent-worktree"
+        / "validations"
+        / validation_id
+    )
+    return ValidationArtifact(
+        directory=directory,
+        report_path=directory / "report.json",
+        checks_directory=directory / "checks",
+    )
