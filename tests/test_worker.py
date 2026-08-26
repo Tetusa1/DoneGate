@@ -215,7 +215,7 @@ def test_success_captures_separate_output_and_does_not_complete_task(tmp_path: P
     stderr = Path(result.stderr_path).read_bytes()
     assert b"out" in stdout
     assert b"err" in stderr
-    assert b".agent-worktree\\worktrees\\success" in stdout
+    assert str(worktree.resolve()).encode() in stdout
     assert read_execution_metadata(root, result.execution_id)["status"] == "succeeded"
     finish_worktree(repository, worktree)
 
