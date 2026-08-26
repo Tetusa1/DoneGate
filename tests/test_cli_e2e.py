@@ -104,7 +104,7 @@ def test_full_offline_cli_workflow_completes_and_cleans(tmp_path: Path) -> None:
     run = _cli(root, "task", "run", "--task", "demo-message", "--json")
     assert run.returncode == 0, run.stderr
     run_payload = json.loads(run.stdout)
-    assert "AGENT_WORKTREE_COMMIT:" not in run.stdout
+    assert "DONEGATE_COMMIT:" not in run.stdout
     assert "Worker output:" not in run.stdout
     assert run_payload["status"] == "completed"
     assert run_payload["state"] == "completed"
@@ -141,9 +141,9 @@ def test_human_cli_streams_worker_output_and_keeps_summary(tmp_path: Path) -> No
     assert run.returncode == 0, run.stderr
     assert "Task: human-output" in run.stdout
     assert "Worker output:" in run.stdout
-    assert "AGENT_WORKTREE_COMMIT:" in run.stdout
+    assert "DONEGATE_COMMIT:" in run.stdout
     assert "STATUS: completed" in run.stdout
-    assert "AGENT_WORKTREE_COMMIT:" not in run.stderr
+    assert "DONEGATE_COMMIT:" not in run.stderr
 
     cleanup = _cli(root, "task", "cleanup", "--task", "human-output")
     assert cleanup.returncode == 0, cleanup.stderr

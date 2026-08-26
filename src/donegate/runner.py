@@ -16,9 +16,9 @@ from .validate import CompletionValidator, ValidationError
 from .worker import OutputCallback, WorkerError, WorkerProcess, WorkerStartError
 
 
-COMMIT_CLAIM_PREFIX = "AGENT_WORKTREE_COMMIT:"
+COMMIT_CLAIM_PREFIX = "DONEGATE_COMMIT:"
 _COMMIT_CLAIM_PATTERN = re.compile(
-    r"^\s*AGENT_WORKTREE_COMMIT:\s*([0-9A-Fa-f]{4,64})\s*$",
+    r"^\s*DONEGATE_COMMIT:\s*([0-9A-Fa-f]{4,64})\s*$",
     re.MULTILINE,
 )
 RUNNABLE_STATES = frozenset({TaskState.PENDING, TaskState.ASSIGNED})

@@ -77,7 +77,7 @@ donegate recover --dry-run --json
 
 The host Git repository must ignore `.agent-worktree/` because it stores local state, execution evidence, and managed worktrees. Add that entry to the host repository's `.gitignore` before creating a task; this repository already includes it.
 
-The demo worker edits `src/message.txt`, commits it in the isolated worktree, prints an `AGENT_WORKTREE_COMMIT: <commit>` claim, and runs `examples/demo_check.py` as a required check. The primary checkout remains untouched; cleanup removes only the managed worktree and releases its lease. The task row and execution/validation evidence remain in `.agent-worktree/`.
+The demo worker edits `src/message.txt`, commits it in the isolated worktree, prints a `DONEGATE_COMMIT: <commit>` claim, and runs `examples/demo_check.py` as a required check. The primary checkout remains untouched; cleanup removes only the managed worktree and releases its lease. The task row and execution/validation evidence remain in `.agent-worktree/`.
 
 `DoneGate` does not depend on Codex, Claude, or any model provider. A real local coding-agent command can be used as `worker_command` when it follows the same commit-claim contract.
 
@@ -111,7 +111,7 @@ For writable tasks, validation requires a successful worker execution, a clean r
 The worker should print its commit claim as one line on stdout:
 
 ```text
-AGENT_WORKTREE_COMMIT: 0123456789abcdef...
+DONEGATE_COMMIT: 0123456789abcdef...
 ```
 
 The runner stores that claim with execution metadata; the validator independently verifies it. Read-only tasks use `write_paths: []` and must leave the worktree at the base with no changes.

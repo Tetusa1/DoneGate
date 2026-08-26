@@ -19,7 +19,7 @@ def main() -> int:
     commit = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], text=True, encoding="utf-8", shell=False
     ).strip()
-    print(f"AGENT_WORKTREE_COMMIT: {commit}")
+    print(f"DONEGATE_COMMIT: {commit}")
     return 0
 
 
