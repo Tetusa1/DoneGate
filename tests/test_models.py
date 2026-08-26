@@ -103,8 +103,14 @@ def test_task_create_validates_example(tmp_path: Path) -> None:
     assert payload["task"]["task_id"] == "parser-validation"
 
 
-def test_runtime_command_is_public_and_rejects_missing_task() -> None:
-    result = run_cli("task", "run", "--task", "parser-validation")
+def test_runtime_command_is_public_and_rejects_missing_task(tmp_path: Path) -> None:
+    result = run_cli(
+        "task",
+        "run",
+        "--task",
+        "parser-validation",
+        state_path=tmp_path / "state.sqlite3",
+    )
     assert result.returncode != 0
     assert "TaskNotFound" in result.stderr
 
