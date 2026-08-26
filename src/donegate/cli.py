@@ -1,4 +1,4 @@
-"""Argparse CLI for agent-worktree task state, validation, and recovery."""
+"""Argparse CLI for donegate task state, validation, and recovery."""
 
 from __future__ import annotations
 
@@ -261,7 +261,7 @@ def _store_from_cwd() -> TaskStore:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="agent-worktree",
+        prog="donegate",
         description="Coordinate coding-agent task state, validation, cleanup, and recovery.",
     )
     parser.add_argument("--version", action="version", version=__version__)

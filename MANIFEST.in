@@ -11,8 +11,8 @@ global-exclude *.sqlite3
 global-exclude *.log
 global-exclude *.egg-info
 global-exclude *.egg-info/*
-recursive-exclude src/agent_worktree.egg-info *
-exclude src/agent_worktree.egg-info/SOURCES.txt
+recursive-exclude src/donegate.egg-info *
+exclude src/donegate.egg-info/SOURCES.txt
 prune build
 prune dist
-prune src/agent_worktree.egg-info
+prune src/donegate.egg-info

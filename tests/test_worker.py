@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_worktree.evidence import (
+from donegate.evidence import (
     ArtifactAlreadyExistsError,
     UnsafeArtifactPathError,
     artifact_paths,
@@ -20,22 +20,22 @@ from agent_worktree.evidence import (
     read_execution_metadata,
     write_execution_metadata,
 )
-from agent_worktree.git import GitRepository
-from agent_worktree.leases import LeaseManager
-from agent_worktree.models import (
+from donegate.git import GitRepository
+from donegate.leases import LeaseManager
+from donegate.models import (
     ExecutionResult,
     ExecutionStatus,
     TaskDefinition,
     TaskState,
 )
-from agent_worktree.state import (
+from donegate.state import (
     DB_SCHEMA_VERSION,
     InvalidExecutionTransition,
     StateStoreError,
     TaskStore,
     UnsupportedSchemaVersionError,
 )
-from agent_worktree.worker import (
+from donegate.worker import (
     AlreadyFinishedError,
     WorkerCommandError,
     WorkerPreconditionError,
@@ -66,7 +66,7 @@ def make_repo(tmp_path: Path) -> tuple[Path, GitRepository, TaskStore]:
     root = tmp_path / "project"
     root.mkdir()
     run_git(root, "init", "-b", "main")
-    run_git(root, "config", "user.name", "agent-worktree worker tests")
+    run_git(root, "config", "user.name", "DoneGate worker tests")
     run_git(root, "config", "user.email", "worker-tests@local.invalid")
     (root / ".gitignore").write_text(".agent-worktree/\n", encoding="utf-8")
     (root / "tracked.txt").write_text("tracked\n", encoding="utf-8")
@@ -304,7 +304,7 @@ def test_failed_worker_updates_task_failed_and_captures_stderr(tmp_path: Path) -
 
 
 def test_missing_executable_is_persisted_failed_without_running_leak(tmp_path: Path) -> None:
-    command = ["agent-worktree-command-that-does-not-exist", "--token", "secret"]
+    command = ["donegate-command-that-does-not-exist", "--token", "secret"]
     root, repository, store, worktree = prepare_task(tmp_path, "missing", command)
     worker = WorkerProcess(store, repository=repository)
     with pytest.raises(WorkerStartError) as error:

@@ -1,4 +1,4 @@
-"""Provider-neutral task definitions for the agent-worktree CLI skeleton."""
+"""Provider-neutral task definitions for the DoneGate CLI skeleton."""
 
 from __future__ import annotations
 

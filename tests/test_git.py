@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_worktree.git import (
+from donegate.git import (
     BranchExistsError,
     GitCommandError,
     GitRepositoryError,
@@ -39,8 +39,8 @@ def make_repo(tmp_path: Path) -> tuple[Path, str]:
     root = tmp_path / "project"
     root.mkdir()
     run_git(root, "init", "-b", "main")
-    run_git(root, "config", "user.name", "agent-worktree tests")
-    run_git(root, "config", "user.email", "agent-worktree-tests@local.invalid")
+    run_git(root, "config", "user.name", "DoneGate tests")
+    run_git(root, "config", "user.email", "donegate-tests@local.invalid")
     (root / ".gitignore").write_text(".agent-worktree/\n", encoding="utf-8")
     (root / "tracked.txt").write_text("tracked\n", encoding="utf-8")
     (root / "deleted.txt").write_text("delete me\n", encoding="utf-8")
@@ -77,7 +77,7 @@ def test_clean_repository_creates_real_isolated_worktree(tmp_path: Path) -> None
 
     created = repo.create_worktree("parser-validation", "HEAD")
 
-    assert created.branch == "agent-worktree/parser-validation"
+    assert created.branch == "donegate/parser-validation"
     assert created.worktree_path == (
         root / ".agent-worktree" / "worktrees" / "parser-validation"
     ).resolve()
@@ -106,7 +106,7 @@ def test_dirty_primary_repository_is_rejected(tmp_path: Path, dirty_kind: str) -
     with pytest.raises(RepositoryDirtyError):
         repo.create_worktree("dirty-rejected")
 
-    assert not repo.branch_exists("agent-worktree/dirty-rejected")
+    assert not repo.branch_exists("donegate/dirty-rejected")
     assert not (repo.worktree_root / "dirty-rejected").exists()
 
 
@@ -117,7 +117,7 @@ def test_invalid_base_ref_leaves_no_branch_or_worktree(tmp_path: Path) -> None:
     with pytest.raises(InvalidBaseRefError):
         repo.create_worktree("invalid-base", "does-not-exist")
 
-    assert not repo.branch_exists("agent-worktree/invalid-base")
+    assert not repo.branch_exists("donegate/invalid-base")
     assert not (repo.worktree_root / "invalid-base").exists()
 
 
@@ -146,7 +146,7 @@ def test_existing_worktree_path_and_content_are_preserved(tmp_path: Path) -> Non
         repo.create_worktree("existing-path")
 
     assert sentinel.read_text(encoding="utf-8") == "keep"
-    assert not repo.branch_exists("agent-worktree/existing-path")
+    assert not repo.branch_exists("donegate/existing-path")
 
 
 def test_worktree_registry_is_parsed_from_real_git_output(tmp_path: Path) -> None:

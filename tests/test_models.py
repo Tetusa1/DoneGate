@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_worktree.models import TaskDefinition, TaskValidationError, load_task_file
+from donegate.models import TaskDefinition, TaskValidationError, load_task_file
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,7 +42,7 @@ def run_cli(*args: str, state_path: Path | None = None) -> subprocess.CompletedP
     if state_path is not None:
         environment["AGENT_WORKTREE_STATE_PATH"] = str(state_path)
     return subprocess.run(
-        [sys.executable, "-m", "agent_worktree", *args],
+        [sys.executable, "-m", "donegate", *args],
         cwd=ROOT,
         env=environment,
         capture_output=True,

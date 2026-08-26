@@ -768,7 +768,7 @@ class RecoveryOrchestrator:
                     RecoveryFinding(
                         code="foreign_worktree",
                         severity="warning",
-                        description="registered worktree is outside agent-worktree namespace",
+                        description="registered worktree is outside DoneGate namespace",
                         worktree=str(info.path),
                     )
                 )

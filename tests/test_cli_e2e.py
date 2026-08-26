@@ -17,7 +17,7 @@ def _cli(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
     environment = os.environ.copy()
     environment["PYTHONPATH"] = str(ROOT / "src") + os.pathsep + environment.get("PYTHONPATH", "")
     return subprocess.run(
-        [sys.executable, "-m", "agent_worktree", *args],
+        [sys.executable, "-m", "donegate", *args],
         cwd=cwd,
         env=environment,
         capture_output=True,
@@ -80,8 +80,8 @@ def _make_demo_repo(tmp_path: Path) -> Path:
     root = tmp_path / "project"
     root.mkdir(parents=True)
     run_git(root, "init", "-b", "main")
-    run_git(root, "config", "user.name", "agent-worktree e2e")
-    run_git(root, "config", "user.email", "agent-worktree-e2e@local.invalid")
+    run_git(root, "config", "user.name", "DoneGate e2e")
+    run_git(root, "config", "user.email", "donegate-e2e@local.invalid")
     (root / ".gitignore").write_text(".agent-worktree/\n", encoding="utf-8")
     (root / "src").mkdir()
     (root / "src" / "message.txt").write_text("hello\n", encoding="utf-8")
@@ -211,7 +211,7 @@ def test_recovery_cli_dry_run_then_apply_repairs_clean_orphan(tmp_path: Path) ->
     root = _make_demo_repo(tmp_path)
     orphan = root / ".agent-worktree" / "worktrees" / "orphan-cli"
     orphan.parent.mkdir(parents=True)
-    run_git(root, "worktree", "add", "-b", "agent-worktree/orphan-cli", str(orphan), "HEAD")
+    run_git(root, "worktree", "add", "-b", "donegate/orphan-cli", str(orphan), "HEAD")
 
     dry = _cli(root, "recover", "--dry-run", "--json")
     assert dry.returncode == 0, dry.stderr

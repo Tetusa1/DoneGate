@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_worktree.leases import (
+from donegate.leases import (
     AlreadyReleasedError,
     InvalidLeaseTTL,
     LeaseConflictError,
@@ -22,8 +22,8 @@ from agent_worktree.leases import (
     canonicalize_lease_paths,
     paths_overlap,
 )
-from agent_worktree.models import TaskDefinition, TaskState, TaskValidationError
-from agent_worktree.state import (
+from donegate.models import TaskDefinition, TaskState, TaskValidationError
+from donegate.state import (
     DB_SCHEMA_VERSION,
     StateStoreError,
     TaskStore,

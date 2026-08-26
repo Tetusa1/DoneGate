@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from agent_worktree.models import TaskDefinition, TaskState
-from agent_worktree.state import (
+from donegate.models import TaskDefinition, TaskState
+from donegate.state import (
     DB_SCHEMA_VERSION,
     DuplicateTaskError,
     InvalidTaskTransition,
@@ -72,7 +72,7 @@ def run_cli(state_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
     environment["GIT_CONFIG_KEY_0"] = "safe.directory"
     environment["GIT_CONFIG_VALUE_0"] = str(ROOT)
     return subprocess.run(
-        [sys.executable, "-m", "agent_worktree", *args],
+        [sys.executable, "-m", "donegate", *args],
         cwd=ROOT,
         env=environment,
         capture_output=True,
@@ -255,13 +255,13 @@ def test_timestamps_are_utc_and_metadata_update_is_limited(tmp_path: Path) -> No
     updated = store.update_task_runtime_metadata(
         created.task_id,
         worktree_path=".agent-worktree/worktrees/metadata-task",
-        branch_name="agent-worktree/metadata-task",
+        branch_name="donegate/metadata-task",
         base_commit="a" * 40,
     )
 
     assert updated.state is TaskState.PENDING
     assert updated.worktree_path == ".agent-worktree/worktrees/metadata-task"
-    assert updated.branch_name == "agent-worktree/metadata-task"
+    assert updated.branch_name == "donegate/metadata-task"
     assert updated.base_commit == "a" * 40
     assert updated.version == 1
     assert updated.updated_at > created.updated_at

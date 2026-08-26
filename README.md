@@ -1,8 +1,8 @@
-# agent-worktree
+# DoneGate
 
-`agent-worktree` runs coding-agent tasks in isolated Git worktrees.
+`DoneGate` runs coding-agent tasks in isolated Git worktrees.
 
-Coding agents can touch the wrong files, collide with another agent, or report success without verifiable evidence. `agent-worktree` gives each task a managed worktree and path lease, records worker execution evidence, and independently validates Git changes before declaring completion.
+Coding agents can touch the wrong files, collide with another agent, or report success without verifiable evidence. `DoneGate` gives each task a managed worktree and path lease, records worker execution evidence, and independently validates Git changes before declaring completion.
 
 Worker exit code 0 is not completion. Completion requires independent checks of:
 
@@ -17,7 +17,7 @@ This is a local developer tool, not a host-security sandbox or a cloud agent pla
 
 ## Before you start
 
-Use `agent-worktree` inside an existing Git repository with Python 3.11+ and Git available on `PATH`. The repository must have at least one commit so Git can resolve the task's base ref, and its primary working tree should be clean before creating or running a task.
+Use `DoneGate` inside an existing Git repository with Python 3.11+ and Git available on `PATH`. The repository must have at least one commit so Git can resolve the task's base ref, and its primary working tree should be clean before creating or running a task.
 
 Check the host repository first:
 
@@ -45,7 +45,7 @@ git config user.name "Your Name"
 git config user.email "you@example.com"
 ```
 
-`agent-worktree` does not automatically run `git init`, change Git identity, stash, reset, clean, or commit the primary checkout. Resolve or commit changes reported by `git status` before running a task.
+`DoneGate` does not automatically run `git init`, change Git identity, stash, reset, clean, or commit the primary checkout. Resolve or commit changes reported by `git status` before running a task.
 
 ## Installation
 
@@ -55,7 +55,7 @@ Python 3.11 or newer and Git are required.
 python -m venv .venv
 python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
-agent-worktree --version
+donegate --version
 ```
 
 The runtime dependency is PyYAML. The `dev` extra supplies pytest and local package-build tooling.
@@ -67,31 +67,31 @@ The repository includes a deterministic worker that needs no model, API key, or 
 ```bash
 python -m venv .venv
 python -m pip install -e ".[dev]"
-agent-worktree task create --file examples/demo-task.yaml
-agent-worktree task run --task demo-message --json
-agent-worktree task status --task demo-message --json
-agent-worktree task validate --task demo-message --json
-agent-worktree task cleanup --task demo-message --json
-agent-worktree recover --dry-run --json
+donegate task create --file examples/demo-task.yaml
+donegate task run --task demo-message --json
+donegate task status --task demo-message --json
+donegate task validate --task demo-message --json
+donegate task cleanup --task demo-message --json
+donegate recover --dry-run --json
 ```
 
 The host Git repository must ignore `.agent-worktree/` because it stores local state, execution evidence, and managed worktrees. Add that entry to the host repository's `.gitignore` before creating a task; this repository already includes it.
 
 The demo worker edits `src/message.txt`, commits it in the isolated worktree, prints an `AGENT_WORKTREE_COMMIT: <commit>` claim, and runs `examples/demo_check.py` as a required check. The primary checkout remains untouched; cleanup removes only the managed worktree and releases its lease. The task row and execution/validation evidence remain in `.agent-worktree/`.
 
-`agent-worktree` does not depend on Codex, Claude, or any model provider. A real local coding-agent command can be used as `worker_command` when it follows the same commit-claim contract.
+`DoneGate` does not depend on Codex, Claude, or any model provider. A real local coding-agent command can be used as `worker_command` when it follows the same commit-claim contract.
 
 ## CLI reference
 
 ```text
-agent-worktree --version
-agent-worktree task create --file TASK_FILE
-agent-worktree task run --task TASK_ID [--json]
-agent-worktree task status --task TASK_ID [--json]
-agent-worktree task validate --task TASK_ID [--json]
-agent-worktree task cleanup --task TASK_ID [--remove-branch] [--json]
-agent-worktree recover --dry-run [--json]
-agent-worktree recover --apply [--json]
+donegate --version
+donegate task create --file TASK_FILE
+donegate task run --task TASK_ID [--json]
+donegate task status --task TASK_ID [--json]
+donegate task validate --task TASK_ID [--json]
+donegate task cleanup --task TASK_ID [--remove-branch] [--json]
+donegate recover --dry-run [--json]
+donegate recover --apply [--json]
 ```
 
 Human-readable `task run` streams worker stdout/stderr live while preserving execution logs. JSON mode keeps stdout machine-readable and stores worker logs in the execution artifacts.
@@ -118,7 +118,7 @@ The runner stores that claim with execution metadata; the validator independentl
 
 ## Path ownership and leases
 
-The task runner creates `<repo>/.agent-worktree/worktrees/<task-id>` and a namespaced `agent-worktree/<task-id>` branch. Writable tasks acquire transactional, segment-aware path leases before the worker starts. Overlapping active leases are rejected. Lease history is retained as SQLite audit data.
+The task runner creates `<repo>/.agent-worktree/worktrees/<task-id>` and a namespaced `donegate/<task-id>` branch. Writable tasks acquire transactional, segment-aware path leases before the worker starts. Overlapping active leases are rejected. Lease history is retained as SQLite audit data.
 
 ## Cleanup and recovery
 

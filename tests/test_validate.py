@@ -11,15 +11,15 @@ from pathlib import Path
 
 import pytest
 
-from agent_worktree.evidence import (
+from donegate.evidence import (
     artifact_paths,
     read_execution_metadata,
     read_validation_report,
     write_execution_metadata,
 )
-from agent_worktree.git import GitRepository
-from agent_worktree.leases import LeaseManager
-from agent_worktree.models import (
+from donegate.git import GitRepository
+from donegate.leases import LeaseManager
+from donegate.models import (
     CheckStatus,
     ExecutionResult,
     ExecutionStatus,
@@ -27,15 +27,15 @@ from agent_worktree.models import (
     TaskState,
     ValidationStatus,
 )
-from agent_worktree.state import (
+from donegate.state import (
     DB_SCHEMA_VERSION,
     TaskStore,
     UnsupportedSchemaVersionError,
     ValidationAlreadyRunningError,
     utc_now,
 )
-from agent_worktree.validate import CompletionValidator
-from agent_worktree.worker import WorkerProcess
+from donegate.validate import CompletionValidator
+from donegate.worker import WorkerProcess
 
 from test_worker import (
     finish_worktree,
@@ -203,7 +203,7 @@ def test_branch_mismatch_and_unrelated_commit_claim_fail_closed(tmp_path: Path) 
         root, repository, store, worktree, "branch-mismatch", claim=True
     )
     store.update_task_runtime_metadata(
-        "branch-mismatch", branch_name="agent-worktree/wrong-branch"
+        "branch-mismatch", branch_name="donegate/wrong-branch"
     )
     report = CompletionValidator(store, repository=repository).validate("branch-mismatch")
     assert report.status is ValidationStatus.FAILED
@@ -360,7 +360,7 @@ def test_required_checks_all_run_and_persist_safe_artifacts(tmp_path: Path) -> N
         RequiredCheck("pass", tuple(python_command("print('stdout'); print('stderr', file=__import__('sys').stderr)")), 2),
         RequiredCheck("nonzero", tuple(python_command("raise SystemExit(3)")), 2),
         RequiredCheck("timeout", tuple(python_command("import time; time.sleep(3)")), 1),
-        RequiredCheck("missing", ("agent-worktree-check-missing",), 1),
+        RequiredCheck("missing", ("donegate-check-missing",), 1),
         RequiredCheck("secret", (sys.executable, "-c", "print('ok')", "--token", "secret"), 2),
     )
     root, repository, store, worktree = prepare_validation_task(
@@ -607,7 +607,7 @@ def test_future_schema_fails_closed_and_cli_json_is_pure(tmp_path: Path) -> None
     environment = os.environ.copy()
     environment["PYTHONPATH"] = str(ROOT / "src")
     result = subprocess.run(
-        [sys.executable, "-m", "agent_worktree", "task", "validate", "--task", "cli-validate", "--json"],
+        [sys.executable, "-m", "donegate", "task", "validate", "--task", "cli-validate", "--json"],
         cwd=root,
         env=environment,
         capture_output=True,

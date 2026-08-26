@@ -6,7 +6,7 @@ Use the repository's security reporting channel once it is published. Do not inc
 
 ## Trust model
 
-The configured `worker_command` is a user-authorized local process. `agent-worktree` is designed to catch accidental or policy-violating Git changes; it is not a hostile-code sandbox. A worker can access anything allowed to the operating-system user, and `read_paths` is not an OS-level restriction.
+The configured `worker_command` is a user-authorized local process. `DoneGate` is designed to catch accidental or policy-violating Git changes; it is not a hostile-code sandbox. A worker can access anything allowed to the operating-system user, and `read_paths` is not an OS-level restriction.
 
 ## Operational guidance
 

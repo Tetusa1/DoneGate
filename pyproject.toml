@@ -3,7 +3,7 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agent-worktree"
+name = "donegate"
 dynamic = ["version"]
 description = "A local CLI for coding-agent tasks with isolated worktrees and evidence-based completion validation."
 readme = "README.md"
@@ -11,7 +11,7 @@ requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [
-  { name = "agent-worktree contributors" },
+  { name = "DoneGate contributors" },
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -34,13 +34,13 @@ dev = [
 ]
 
 [project.scripts]
-agent-worktree = "agent_worktree.cli:main"
+donegate = "donegate.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.dynamic]
-version = { attr = "agent_worktree.__version__" }
+version = { attr = "donegate.__version__" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

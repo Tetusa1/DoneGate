@@ -1,4 +1,4 @@
-"""SQLite-backed persistent task state for agent-worktree."""
+"""SQLite-backed persistent task state for DoneGate."""
 
 from __future__ import annotations
 

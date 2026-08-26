@@ -1,1 +1,1 @@
-hello from agent-worktree
+hello from DoneGate

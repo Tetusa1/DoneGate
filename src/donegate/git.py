@@ -1,4 +1,4 @@
-"""Small, fail-closed Git and worktree adapter for agent-worktree."""
+"""Small, fail-closed Git and worktree adapter for DoneGate."""
 
 from __future__ import annotations
 
@@ -415,9 +415,9 @@ class GitRepository:
 
     def delete_branch(self, branch: str) -> bool:
         validated = self._validate_branch_name(branch)
-        if not validated.startswith("agent-worktree/"):
+        if not validated.startswith("donegate/"):
             raise UnsafeBranchNameError(
-                "only agent-worktree/ namespace branches may be deleted"
+                "only donegate/ namespace branches may be deleted"
             )
         if not self.branch_exists(validated):
             return False
@@ -433,7 +433,7 @@ class GitRepository:
             raise UnsafeBranchNameError(f"unsafe task_id for branch creation: {task_id!r}")
         if ".." in task_id or task_id.lower().endswith(".lock"):
             raise UnsafeBranchNameError(f"unsafe task_id for branch creation: {task_id!r}")
-        return self._validate_branch_name(f"agent-worktree/{task_id}")
+        return self._validate_branch_name(f"donegate/{task_id}")
 
     def _resolve_commit(self, ref: str) -> str:
         value = _argument_text(ref, "base_ref")

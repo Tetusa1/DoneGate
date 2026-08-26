@@ -1,4 +1,4 @@
-"""Provider-neutral worker process lifecycle for agent-worktree.
+"""Provider-neutral worker process lifecycle for DoneGate.
 
 The adapter starts only the command persisted in a validated task definition,
 inside that task's registered Git worktree.  It records process evidence but
@@ -499,13 +499,13 @@ class WorkerProcess:
             threading.Thread(
                 target=_pump_output,
                 args=(process.stdout, artifact.stdout_path, on_stdout),
-                name=f"agent-worktree-{process.pid}-stdout",
+                name=f"donegate-{process.pid}-stdout",
                 daemon=True,
             ),
             threading.Thread(
                 target=_pump_output,
                 args=(process.stderr, artifact.stderr_path, on_stderr),
-                name=f"agent-worktree-{process.pid}-stderr",
+                name=f"donegate-{process.pid}-stderr",
                 daemon=True,
             ),
         )

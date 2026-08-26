@@ -9,20 +9,20 @@ from pathlib import Path
 
 import pytest
 
-from agent_worktree.evidence import (
+from donegate.evidence import (
     create_execution_artifact,
     read_execution_metadata,
     read_recovery_report,
 )
-from agent_worktree.leases import LeaseManager
-from agent_worktree.models import (
+from donegate.leases import LeaseManager
+from donegate.models import (
     ExecutionResult,
     ExecutionStatus,
     TaskState,
     ValidationReport,
     ValidationStatus,
 )
-from agent_worktree.recovery import (
+from donegate.recovery import (
     ActiveValidationCleanupError,
     BranchCleanupPendingError,
     CleanupOrchestrator,
@@ -31,7 +31,7 @@ from agent_worktree.recovery import (
     RecoveryOrchestrator,
     RunningExecutionCleanupError,
 )
-from agent_worktree.state import TaskStore
+from donegate.state import TaskStore
 
 from test_worker import make_repo, prepare_task, python_command, run_git, task_definition
 
@@ -210,7 +210,7 @@ def test_branch_delete_failure_keeps_task_out_of_cleaned_state(tmp_path: Path) -
         )
     assert store.get("branch-failure").state is TaskState.COMPLETED
     assert not worktree.exists()
-    assert repository.branch_exists("agent-worktree/branch-failure")
+    assert repository.branch_exists("donegate/branch-failure")
 
 
 def test_recovery_dry_run_is_non_destructive_and_persists_report(tmp_path: Path) -> None:
@@ -355,7 +355,7 @@ def test_recovery_blocks_running_task_with_missing_worktree_or_branch_mismatch(
         tmp_path / "branch", "branch-mismatch", python_command("pass")
     )
     store.transition("branch-mismatch", TaskState.RUNNING)
-    store.update_task_runtime_metadata("branch-mismatch", branch_name="agent-worktree/wrong")
+    store.update_task_runtime_metadata("branch-mismatch", branch_name="donegate/wrong")
     report = RecoveryOrchestrator(store, repository=repository).recover("apply")
     assert "task_branch_mismatch" in _finding_codes(report)
     assert store.get("branch-mismatch").state is TaskState.BLOCKED
@@ -398,7 +398,7 @@ def test_cleanup_and_recover_cli_json_are_wired(tmp_path: Path) -> None:
         [
             sys.executable,
             "-m",
-            "agent_worktree",
+            "donegate",
             "task",
             "cleanup",
             "--task",
@@ -416,7 +416,7 @@ def test_cleanup_and_recover_cli_json_are_wired(tmp_path: Path) -> None:
     assert TaskStore(root).get("cli-cleanup").state is TaskState.CLEANED
 
     recovery = subprocess.run(
-        [sys.executable, "-m", "agent_worktree", "recover", "--dry-run", "--json"],
+        [sys.executable, "-m", "donegate", "recover", "--dry-run", "--json"],
         cwd=root,
         env=environment,
         capture_output=True,
